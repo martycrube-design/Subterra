@@ -1,0 +1,7 @@
+Subterra for Windows
+====================
+
+1. Copy Subterra.vst3 to C:\Program Files\Common Files\VST3\
+2. Subterra.exe is the standalone app (optional): pick your audio interface under Options.
+3. Restart your DAW and rescan plugins. Subterra appears as an audio effect from "Subterra Audio".
+   Put it on the track your bass is recorded or monitored on.
