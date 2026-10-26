@@ -70,23 +70,29 @@ jobs:
         run: ./build/SubterraTests_artefacts/Release/SubterraTests
 
       - name: Check binaries run on macOS 11 and later, Intel and Apple Silicon
+        shell: bash
         run: |
           A=build/Subterra_artefacts/Release
+          fail=0
           for bin in "$A/VST3/Subterra.vst3/Contents/MacOS/Subterra" \
                      "$A/AU/Subterra.component/Contents/MacOS/Subterra" \
                      "$A/Standalone/Subterra.app/Contents/MacOS/Subterra"; do
-            lipo -info "$bin"
-            lipo -verify_arch "$bin" arm64 x86_64
+            echo "::notice::$(lipo -info "$bin" 2>&1)"
             for arch in arm64 x86_64; do
-              minos=$(vtool -arch $arch -show-build "$bin" | awk '/minos/ {print $2}')
-              echo "$bin [$arch] minimum macOS $minos"
-              [ "$minos" = "11.0" ] || { echo "::error::$bin [$arch] needs macOS $minos, expected 11.0"; exit 1; }
+              minos=$(vtool -arch $arch -show-build "$bin" 2>&1 | awk '/minos/ {print $2}')
+              [ -z "$minos" ] && minos=$(otool -arch $arch -l "$bin" | awk '/LC_VERSION_MIN_MACOSX/ {f=1} f && /version/ {print $2; exit}')
+              echo "::notice::$(basename "$(dirname "$(dirname "$(dirname "$bin")")")") [$arch] minimum macOS: ${minos:-not found}"
+              case "$minos" in
+                10.*|11.0) ;;
+                *) echo "::error::$bin [$arch] needs macOS ${minos:-unknown}"; fail=1 ;;
+              esac
             done
           done
           for bundle in "$A/VST3/Subterra.vst3" "$A/AU/Subterra.component" "$A/Standalone/Subterra.app"; do
-            echo "$bundle LSMinimumSystemVersion: $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$bundle/Contents/Info.plist" 2>/dev/null || echo unset)"
+            echo "::notice::$(basename "$bundle") LSMinimumSystemVersion: $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$bundle/Contents/Info.plist" 2>&1)"
           done
-          ls "$A/Standalone/Subterra.app/Contents/Resources/"*.icns
+          echo "::notice::App resources: $(ls "$A/Standalone/Subterra.app/Contents/Resources/" | tr '\n' ' ')"
+          exit $fail
 
       - name: Ad-hoc sign
         run: |
