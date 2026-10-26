@@ -62,7 +62,7 @@ macOS builds VST3, AU and a standalone app; Windows and Linux build VST3 and sta
 
 GitHub Actions builds all three platforms on every push, runs the engine tests, checks every UI control,
 and validates the plugins with [pluginval](https://github.com/Tracktion/pluginval) at its strictest level
-(plus `auval` for the Audio Unit). Download the builds from the run's **Artifacts**. Pushing a tag such as
+(plus `auval` for the Audio Unit). Download the builds from the run's **Artifacts**: on a Mac, run `Subterra-macOS-Installer.pkg`. Pushing a tag such as
 `v0.1.0` also publishes them as a GitHub release.
 
 ## Licence notes

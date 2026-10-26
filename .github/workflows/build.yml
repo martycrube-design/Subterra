@@ -96,17 +96,36 @@ jobs:
 
       - name: Package
         run: |
+          A=build/Subterra_artefacts/Release
+          VERSION=$(sed -n 's/^project(Subterra VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+
+          # Installer: AU + VST3 into /Library/Audio/Plug-Ins, the app into /Applications.
+          mkdir -p pkgroot/Library/Audio/Plug-Ins/Components pkgroot/Library/Audio/Plug-Ins/VST3 pkgroot/Applications
+          cp -R "$A/AU/Subterra.component" pkgroot/Library/Audio/Plug-Ins/Components/
+          cp -R "$A/VST3/Subterra.vst3" pkgroot/Library/Audio/Plug-Ins/VST3/
+          cp -R "$A/Standalone/Subterra.app" pkgroot/Applications/
+
+          # Install to exactly these paths, even if another copy exists elsewhere on the Mac.
+          pkgbuild --analyze --root pkgroot components.plist
+          python3 -c "import plistlib; p = 'components.plist'; c = plistlib.load(open(p, 'rb')); [b.update(BundleIsRelocatable=False) for b in c]; plistlib.dump(c, open(p, 'wb'))"
+          plutil -p components.plist
+
+          pkgbuild --root pkgroot --component-plist components.plist \
+            --identifier com.subterraaudio.subterra.pkg --version "$VERSION" \
+            --install-location / Subterra-macOS-Installer.pkg
+
+          # Zip with the raw plugins for manual installs.
           mkdir -p dist
-          cp -R build/Subterra_artefacts/Release/VST3/Subterra.vst3 dist/
-          cp -R build/Subterra_artefacts/Release/AU/Subterra.component dist/
-          cp -R build/Subterra_artefacts/Release/Standalone/Subterra.app dist/
+          cp -R "$A/VST3/Subterra.vst3" "$A/AU/Subterra.component" "$A/Standalone/Subterra.app" dist/
           cp packaging/INSTALL-mac.txt dist/
           (cd dist && ditto -c -k --keepParent . ../Subterra-macOS.zip)
 
       - uses: actions/upload-artifact@v4
         with:
           name: Subterra-macOS
-          path: Subterra-macOS.zip
+          path: |
+            Subterra-macOS-Installer.pkg
+            Subterra-macOS.zip
 
   windows:
     runs-on: windows-2022
@@ -157,5 +176,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            artifacts/Subterra-macOS/Subterra-macOS-Installer.pkg
             artifacts/Subterra-macOS/Subterra-macOS.zip
             artifacts/Subterra-Windows/Subterra-Windows.zip

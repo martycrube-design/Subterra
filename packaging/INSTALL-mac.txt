@@ -1,17 +1,19 @@
 Subterra for macOS
 ==================
 
-1. Copy the plugins:
-   Subterra.component  ->  ~/Library/Audio/Plug-Ins/Components/   (Audio Unit: Logic, GarageBand, Ableton Live)
-   Subterra.vst3       ->  ~/Library/Audio/Plug-Ins/VST3/          (VST3: Ableton Live, Cubase, Reaper, Studio One, Bitwig)
-   Subterra.app        ->  /Applications/                           (standalone app, optional)
+Easiest: double-click Subterra-macOS-Installer.pkg and follow the steps.
+It installs:
+  Subterra.component  ->  /Library/Audio/Plug-Ins/Components   (Audio Unit: Logic, GarageBand, Ableton Live)
+  Subterra.vst3       ->  /Library/Audio/Plug-Ins/VST3          (VST3: Ableton Live, Cubase, Reaper, Studio One, Bitwig)
+  Subterra.app        ->  /Applications                         (standalone app)
 
-2. These builds are not notarized by Apple yet, so macOS quarantines them.
-   Open Terminal and run:
+If macOS says it can't verify the developer, right-click the .pkg, choose Open, then Open again.
+(Or open System Settings > Privacy & Security and click "Open Anyway".)
 
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Subterra.component
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Subterra.vst3
-   xattr -dr com.apple.quarantine /Applications/Subterra.app
+Then restart your DAW and rescan plugins. Subterra appears as an audio effect from "Subterra Audio".
+Put it on the track your bass is recorded or monitored on.
 
-3. Restart your DAW and rescan plugins. Subterra appears as an audio effect from "Subterra Audio".
-   Put it on the track your bass is recorded or monitored on.
+Manual install (zip): copy the files to the folders above, then run this once in Terminal,
+because files copied by hand keep the download quarantine:
+
+  sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/Components/Subterra.component /Library/Audio/Plug-Ins/VST3/Subterra.vst3 /Applications/Subterra.app
