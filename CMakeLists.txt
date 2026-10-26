@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Must be set before project(): on macOS, project() fixes the deployment target, and an
+# unset one makes Xcode target the build machine's own macOS version.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+
 project(Subterra VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
 option(SUBTERRA_BUILD_TESTS "Build the Subterra test runner" ON)
 
@@ -33,6 +36,7 @@ juce_add_plugin(Subterra
     PLUGIN_CODE Sbtr
     PRODUCT_NAME "Subterra"
     DESCRIPTION "Bass synthesizer pedal"
+    ICON_BIG resources/icon.png
     FORMATS ${SUBTERRA_FORMATS}
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE

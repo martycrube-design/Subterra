@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure (universal)
-        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
       - name: Build
         run: |
@@ -69,12 +69,32 @@ jobs:
       - name: Engine tests
         run: ./build/SubterraTests_artefacts/Release/SubterraTests
 
+      - name: Check binaries run on macOS 11 and later, Intel and Apple Silicon
+        run: |
+          A=build/Subterra_artefacts/Release
+          for bin in "$A/VST3/Subterra.vst3/Contents/MacOS/Subterra" \
+                     "$A/AU/Subterra.component/Contents/MacOS/Subterra" \
+                     "$A/Standalone/Subterra.app/Contents/MacOS/Subterra"; do
+            lipo -info "$bin"
+            lipo -verify_arch "$bin" arm64 x86_64
+            for arch in arm64 x86_64; do
+              minos=$(vtool -arch $arch -show-build "$bin" | awk '/minos/ {print $2}')
+              echo "$bin [$arch] minimum macOS $minos"
+              [ "$minos" = "11.0" ] || { echo "::error::$bin [$arch] needs macOS $minos, expected 11.0"; exit 1; }
+            done
+          done
+          for bundle in "$A/VST3/Subterra.vst3" "$A/AU/Subterra.component" "$A/Standalone/Subterra.app"; do
+            echo "$bundle LSMinimumSystemVersion: $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$bundle/Contents/Info.plist" 2>/dev/null || echo unset)"
+          done
+          ls "$A/Standalone/Subterra.app/Contents/Resources/"*.icns
+
       - name: Ad-hoc sign
         run: |
           for bundle in build/Subterra_artefacts/Release/VST3/Subterra.vst3 \
                         build/Subterra_artefacts/Release/AU/Subterra.component \
                         build/Subterra_artefacts/Release/Standalone/Subterra.app; do
             codesign --force --deep --sign - "$bundle"
+            codesign --verify --deep --strict --verbose=2 "$bundle"
           done
 
       - name: auval
