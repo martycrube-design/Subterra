@@ -24,26 +24,59 @@ struct FactoryPreset
 };
 
 // Wave: 0 sine, 0.333 saw, 0.667 square, 1 triangle. Octave is the knob index (2 = unison).
+// Delay division index: 0 1/16, 1 1/8T, 2 1/8, 3 1/8D, 4 1/4T, 5 1/4, 6 1/4D, 7 1/2. Routing: 0 synth, 1 synth + bass.
+using namespace ParamIDs;
 const FactoryPreset factoryPresets[] = {
-    { "Bedrock",    { { ParamIDs::wave, 0.333f }, { ParamIDs::octave, 2 }, { ParamIDs::filter, 600.0f }, { ParamIDs::reso, 0.3f },
-                      { ParamIDs::env, 0.5f }, { ParamIDs::drive, 0.2f }, { ParamIDs::mix, 0.7f }, { ParamIDs::glide, 20.0f } } },
-    { "Sub Floor",  { { ParamIDs::wave, 0.0f }, { ParamIDs::octave, 1 }, { ParamIDs::filter, 320.0f }, { ParamIDs::reso, 0.1f },
-                      { ParamIDs::env, 0.1f }, { ParamIDs::drive, 0.1f }, { ParamIDs::mix, 0.5f }, { ParamIDs::glide, 10.0f } } },
-    { "Magma",      { { ParamIDs::wave, 0.667f }, { ParamIDs::octave, 2 }, { ParamIDs::filter, 250.0f }, { ParamIDs::reso, 0.7f },
-                      { ParamIDs::env, 0.8f }, { ParamIDs::drive, 0.6f }, { ParamIDs::mix, 0.85f }, { ParamIDs::glide, 15.0f } } },
-    { "Fault Line", { { ParamIDs::wave, 0.5f }, { ParamIDs::octave, 1 }, { ParamIDs::filter, 180.0f }, { ParamIDs::reso, 0.85f },
-                      { ParamIDs::env, 1.0f }, { ParamIDs::drive, 0.35f }, { ParamIDs::mix, 1.0f }, { ParamIDs::glide, 5.0f } } },
-    { "Deep Core",  { { ParamIDs::wave, 1.0f }, { ParamIDs::octave, 0 }, { ParamIDs::filter, 900.0f }, { ParamIDs::reso, 0.2f },
-                      { ParamIDs::env, -0.4f }, { ParamIDs::drive, 0.0f }, { ParamIDs::mix, 0.6f }, { ParamIDs::glide, 80.0f } } },
-    { "Tremor",     { { ParamIDs::wave, 0.333f }, { ParamIDs::octave, 3 }, { ParamIDs::filter, 1200.0f }, { ParamIDs::reso, 0.5f },
-                      { ParamIDs::env, -0.7f }, { ParamIDs::drive, 0.45f }, { ParamIDs::mix, 0.6f }, { ParamIDs::glide, 1.0f } } },
-    { "Init",       {} },
+    { "Bedrock",      { { wave, 0.333f }, { octave, 2 }, { filter, 650.0f }, { reso, 0.35f }, { env, 0.55f }, { drive, 0.25f },
+                        { mix, 0.7f }, { glide, 20.0f } } },
+    { "Sub Floor",    { { wave, 0.0f }, { octave, 1 }, { filter, 320.0f }, { reso, 0.1f }, { env, 0.1f }, { drive, 0.1f },
+                        { mix, 0.5f }, { glide, 10.0f } } },
+    { "Magma",        { { wave, 0.667f }, { octave, 2 }, { filter, 250.0f }, { reso, 0.7f }, { env, 0.8f }, { drive, 0.6f },
+                        { mix, 0.85f }, { glide, 15.0f },
+                        { reverbOn, 1 }, { reverbSize, 0.35f }, { reverbTone, 0.4f }, { reverbMix, 0.15f } } },
+    { "Fault Line",   { { wave, 0.5f }, { octave, 1 }, { filter, 180.0f }, { reso, 0.85f }, { env, 1.0f }, { drive, 0.35f },
+                        { mix, 1.0f }, { glide, 5.0f },
+                        { delayOn, 1 }, { delaySync, 1 }, { delayDivision, 3 }, { delayFeedback, 0.3f }, { delayTone, 3000.0f },
+                        { delayMix, 0.2f } } },
+    { "Deep Core",    { { wave, 1.0f }, { octave, 0 }, { filter, 900.0f }, { reso, 0.2f }, { env, -0.4f }, { drive, 0.0f },
+                        { mix, 0.6f }, { glide, 80.0f },
+                        { chorusOn, 1 }, { chorusRate, 0.4f }, { chorusDepth, 0.6f }, { chorusMix, 0.45f },
+                        { reverbOn, 1 }, { reverbSize, 0.6f }, { reverbTone, 0.45f }, { reverbMix, 0.25f } } },
+    { "Tremor",       { { wave, 0.333f }, { octave, 3 }, { filter, 1200.0f }, { reso, 0.5f }, { env, -0.7f }, { drive, 0.45f },
+                        { mix, 0.6f }, { glide, 1.0f },
+                        { chorusOn, 1 }, { chorusRate, 1.2f }, { chorusDepth, 0.4f }, { chorusMix, 0.4f } } },
+    { "Cavern",       { { wave, 0.0f }, { octave, 1 }, { filter, 500.0f }, { reso, 0.2f }, { env, 0.2f }, { drive, 0.1f },
+                        { mix, 0.6f }, { glide, 40.0f }, { fxRouting, 1 },
+                        { delayOn, 1 }, { delaySync, 1 }, { delayDivision, 5 }, { delayFeedback, 0.35f }, { delayTone, 2500.0f },
+                        { delayMix, 0.2f },
+                        { reverbOn, 1 }, { reverbSize, 0.85f }, { reverbTone, 0.35f }, { reverbMix, 0.4f } } },
+    { "Bloom",        { { wave, 0.9f }, { octave, 2 }, { filter, 2000.0f }, { reso, 0.15f }, { env, 0.3f }, { drive, 0.0f },
+                        { mix, 0.55f }, { glide, 60.0f },
+                        { chorusOn, 1 }, { chorusRate, 0.35f }, { chorusDepth, 0.7f }, { chorusMix, 0.55f },
+                        { reverbOn, 1 }, { reverbSize, 0.7f }, { reverbTone, 0.55f }, { reverbMix, 0.3f } } },
+    { "Echo Chamber", { { wave, 0.333f }, { octave, 2 }, { filter, 900.0f }, { reso, 0.4f }, { env, 0.6f }, { drive, 0.3f },
+                        { mix, 0.8f }, { glide, 20.0f },
+                        { delayOn, 1 }, { delaySync, 1 }, { delayDivision, 3 }, { delayFeedback, 0.45f }, { delayTone, 3500.0f },
+                        { delayMix, 0.35f },
+                        { reverbOn, 1 }, { reverbSize, 0.5f }, { reverbTone, 0.5f }, { reverbMix, 0.2f } } },
+    { "Pulse Grid",   { { wave, 0.667f }, { octave, 3 }, { filter, 1500.0f }, { reso, 0.55f }, { env, 0.7f }, { drive, 0.4f },
+                        { mix, 0.65f }, { glide, 1.0f },
+                        { delayOn, 1 }, { delaySync, 1 }, { delayDivision, 0 }, { delayFeedback, 0.25f }, { delayTone, 6000.0f },
+                        { delayMix, 0.25f } } },
+    { "Abyss",        { { wave, 0.0f }, { octave, 0 }, { filter, 250.0f }, { reso, 0.1f }, { env, 0.0f }, { drive, 0.25f },
+                        { mix, 0.5f }, { glide, 30.0f },
+                        { reverbOn, 1 }, { reverbSize, 0.9f }, { reverbTone, 0.25f }, { reverbMix, 0.3f } } },
+    { "Wide Saw",     { { wave, 0.333f }, { octave, 2 }, { filter, 1800.0f }, { reso, 0.3f }, { env, 0.4f }, { drive, 0.25f },
+                        { mix, 0.7f }, { glide, 20.0f }, { fxRouting, 1 },
+                        { chorusOn, 1 }, { chorusRate, 0.8f }, { chorusDepth, 0.5f }, { chorusMix, 0.5f } } },
+    { "Tape Drift",   { { wave, 0.45f }, { octave, 2 }, { filter, 1100.0f }, { reso, 0.45f }, { env, 0.5f }, { drive, 0.5f },
+                        { mix, 0.75f }, { glide, 25.0f },
+                        { chorusOn, 1 }, { chorusRate, 0.2f }, { chorusDepth, 0.3f }, { chorusMix, 0.25f },
+                        { delayOn, 1 }, { delaySync, 0 }, { delayTime, 420.0f }, { delayFeedback, 0.55f }, { delayTone, 1800.0f },
+                        { delayMix, 0.3f } } },
+    { "Init",         {} },
 };
 
-juce::RangedAudioParameter* findParam (juce::AudioProcessorValueTreeState& apvts, const juce::String& id)
-{
-    return apvts.getParameter (id);
-}
 }
 
 PresetManager::PresetManager (juce::AudioProcessorValueTreeState& state) : apvts (state)
@@ -86,6 +119,10 @@ void PresetManager::addFactoryPresets()
         juce::ValueTree tree (presetType);
         tree.setProperty (nameProp, fp.name, nullptr);
 
+        for (const auto& v : fp.values)
+            if (apvts.getParameter (v.id) == nullptr || isPerformanceParameter (v.id))
+                unknownFactoryIds.addIfNotAlreadyThere (juce::String (fp.name) + ": " + v.id);
+
         for (auto* p : apvts.processor.getParameters())
         {
             auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p);
@@ -111,6 +148,7 @@ void PresetManager::addFactoryPresets()
 
 void PresetManager::rescanUserPresets()
 {
+    const juce::ScopedLock sl (lock);
     const auto current = currentIndex < (int) presets.size() ? presets[(size_t) currentIndex].name : juce::String();
     presets.resize ((size_t) numFactory);
 
@@ -140,7 +178,7 @@ void PresetManager::rescanUserPresets()
 juce::ValueTree PresetManager::captureSound() const
 {
     juce::ValueTree tree (presetType);
-    tree.setProperty (nameProp, currentName, nullptr);
+    tree.setProperty (nameProp, getCurrentName(), nullptr);
 
     for (auto* p : apvts.processor.getParameters())
     {
@@ -161,20 +199,23 @@ void PresetManager::applySound (const juce::ValueTree& sound)
 {
     ++applying;
 
-    for (const auto& param : sound)
+    // Every sound parameter is set. Ones the preset doesn't mention (e.g. effects in a preset
+    // saved by an older version) go back to their defaults rather than keeping the last sound's value.
+    for (auto* p : apvts.processor.getParameters())
     {
-        if (! param.hasType (paramType))
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (ranged == nullptr || isPerformanceParameter (ranged->getParameterID()))
             continue;
 
-        const auto id = param[idProp].toString();
-        if (isPerformanceParameter (id))
-            continue;
+        float normalised = ranged->getDefaultValue();
+        const auto stored = sound.getChildWithProperty (idProp, ranged->getParameterID());
+        if (stored.isValid() && stored.hasProperty (valueProp))
+            normalised = ranged->convertTo0to1 ((float) stored[valueProp]);
 
-        if (auto* ranged = findParam (apvts, id))
+        if (std::abs (ranged->getValue() - normalised) > 1.0e-7f)
         {
-            const float value = (float) param[valueProp];
             ranged->beginChangeGesture();
-            ranged->setValueNotifyingHost (ranged->convertTo0to1 (value));
+            ranged->setValueNotifyingHost (normalised);
             ranged->endChangeGesture();
         }
     }
@@ -182,26 +223,37 @@ void PresetManager::applySound (const juce::ValueTree& sound)
     --applying;
 }
 
+Preset PresetManager::getPreset (int index) const
+{
+    const juce::ScopedLock sl (lock);
+    return juce::isPositiveAndBelow (index, (int) presets.size()) ? presets[(size_t) index] : Preset {};
+}
+
 void PresetManager::loadPreset (int index)
 {
     if (! juce::isPositiveAndBelow (index, (int) presets.size()))
         return;
 
-    currentIndex = index;
-    currentName = presets[(size_t) index].name;
-    applySound (presets[(size_t) index].state);
+    juce::ValueTree sound;
+    {
+        const juce::ScopedLock sl (lock);
+        currentIndex = index;
+        currentName = presets[(size_t) index].name;
+        sound = presets[(size_t) index].state;
+    }
+    applySound (sound);
     modified = false;
     displayChanged = true;
 }
 
 void PresetManager::loadNext()
 {
-    loadPreset ((currentIndex + 1) % getNumPresets());
+    loadPreset ((getCurrentIndex() + 1) % getNumPresets());
 }
 
 void PresetManager::loadPrevious()
 {
-    loadPreset ((currentIndex + getNumPresets() - 1) % getNumPresets());
+    loadPreset ((getCurrentIndex() + getNumPresets() - 1) % getNumPresets());
 }
 
 bool PresetManager::saveUserPreset (const juce::String& rawName)
@@ -221,6 +273,7 @@ bool PresetManager::saveUserPreset (const juce::String& rawName)
     if (xml == nullptr || ! xml->writeTo (file))
         return false;
 
+    const juce::ScopedLock sl (lock);
     currentName = name;
     currentIndex = numFactory;
     rescanUserPresets();
@@ -235,6 +288,7 @@ bool PresetManager::saveUserPreset (const juce::String& rawName)
 
 juce::ValueTree PresetManager::getState() const
 {
+    const juce::ScopedLock sl (lock);
     juce::ValueTree state (presetStateType);
     state.setProperty (nameProp, currentName, nullptr);
     state.setProperty (indexProp, currentIndex, nullptr);
@@ -247,6 +301,7 @@ void PresetManager::setState (const juce::ValueTree& state)
     if (! state.hasType (presetStateType))
         return;
 
+    const juce::ScopedLock sl (lock);
     currentName = state[nameProp].toString();
     currentIndex = 0;
     for (int i = 0; i < (int) presets.size(); ++i)
@@ -255,6 +310,39 @@ void PresetManager::setState (const juce::ValueTree& state)
 
     modified = (bool) state[modifiedProp];
     displayChanged = true;
+}
+
+bool PresetManager::userPresetExists (const juce::String& rawName) const
+{
+    const auto name = juce::File::createLegalFileName (rawName.trim());
+    return name.isNotEmpty() && userFolder.getChildFile (name + fileExtension).existsAsFile();
+}
+
+bool PresetManager::deleteUserPreset (int index)
+{
+    juce::File file;
+    {
+        const juce::ScopedLock sl (lock);
+        if (index < numFactory || index >= (int) presets.size())
+            return false;
+        file = presets[(size_t) index].file;
+    }
+
+    // Move to the Trash / Recycle Bin so a mistaken delete can be undone.
+    if (! file.moveToTrash() && ! file.deleteFile())
+        return false;
+
+    const bool wasCurrent = index == getCurrentIndex();
+    rescanUserPresets();
+    if (wasCurrent)
+    {
+        // The sound stays as it is; it just no longer has a saved preset behind it.
+        const juce::ScopedLock sl (lock);
+        currentIndex = 0;
+        modified = true;
+        displayChanged = true;
+    }
+    return true;
 }
 
 void PresetManager::parameterChanged (const juce::String&, float)

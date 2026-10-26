@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # unset one makes Xcode target the build machine's own macOS version.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(Subterra VERSION 0.1.0 LANGUAGES C CXX)
+project(Subterra VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,10 +58,18 @@ set(SUBTERRA_CORE_SOURCES
     source/Parameters.cpp
     source/Presets.cpp)
 
+set(SUBTERRA_UI_SOURCES
+    source/PluginEditor.cpp
+    source/ui/Controls.cpp
+    source/ui/EffectsPage.cpp
+    source/ui/Header.cpp
+    source/ui/Overlay.cpp
+    source/ui/PedalPage.cpp
+    source/ui/SubterraLookAndFeel.cpp)
+
 target_sources(Subterra PRIVATE
     ${SUBTERRA_CORE_SOURCES}
-    source/PluginEditor.cpp
-    source/ui/SubterraLookAndFeel.cpp)
+    ${SUBTERRA_UI_SOURCES})
 
 target_include_directories(Subterra PRIVATE source)
 
@@ -103,8 +111,7 @@ if(SUBTERRA_BUILD_SNAPSHOT)
     target_sources(SubterraSnapshot PRIVATE
         tools/Snapshot.cpp
         ${SUBTERRA_CORE_SOURCES}
-        source/PluginEditor.cpp
-        source/ui/SubterraLookAndFeel.cpp)
+        ${SUBTERRA_UI_SOURCES})
     target_include_directories(SubterraSnapshot PRIVATE source)
     target_compile_definitions(SubterraSnapshot PRIVATE
         JUCE_WEB_BROWSER=0

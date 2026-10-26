@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <functional>
 #include <random>
+#include <thread>
 
 using namespace subterra;
 
@@ -250,7 +251,7 @@ void testPitchTracker()
     quiet.prepare (testRate);
     auto none = silence (0.3);
     quiet.process (none.data(), (int) none.size());
-    expect (quiet.getFrequency() == 0.0f, "silence gives no pitch");
+    expect (juce::exactlyEqual (quiet.getFrequency(), 0.0f), "silence gives no pitch");
 
     std::mt19937 rng (1);
     std::normal_distribution<float> noise (0.0f, 0.2f);
@@ -316,7 +317,7 @@ void testSynthFollowsBass()
     const float after = rms (out.left, (size_t) (1.0 * testRate), (size_t) (1.3 * testRate));
     expect (during > 0.02f, "synth sounds while playing");
     expect (after < during * 0.001f, "synth goes quiet after the note ends");
-    expect (p->detectedFrequency.load() == 0.0f, "note readout clears after the note ends");
+    expect (juce::exactlyEqual (p->detectedFrequency.load(), 0.0f), "note readout clears after the note ends");
 }
 
 // Renders the same input twice, with a parameter at two values, and checks the outputs differ.
@@ -503,14 +504,17 @@ void testPresetsAndState()
     temp.deleteRecursively();
     presets.setUserFolder (temp);
 
-    expect (presets.getNumFactoryPresets() >= 6, "has factory presets");
+    expect (presets.getNumFactoryPresets() >= 12, "has factory presets");
+    expect (presets.unknownFactoryIds.isEmpty(), "factory presets only set real sound parameters: " + presets.unknownFactoryIds.joinIntoString (", "));
     expect (presets.getCurrentName() == "Bedrock", "starts on Bedrock");
 
     juce::StringArray seen;
     for (int i = 0; i < presets.getNumFactoryPresets(); ++i)
     {
         presets.loadPreset (i);
-        seen.add (juce::String (getParam (*p, ParamIDs::filter)) + "/" + juce::String (getParam (*p, ParamIDs::wave)));
+        auto sound = presets.captureSound();
+        sound.removeProperty ("name", nullptr);
+        seen.add (sound.toXmlString());
         expect (! presets.isModified(), "loading " + presets.getCurrentName() + " is not marked modified");
     }
     seen.removeDuplicates (false);
@@ -672,6 +676,620 @@ void testRobustness()
 }
 }
 
+// ---------------------------------------------------------------------------
+// Effects
+
+struct FakePlayHead final : juce::AudioPlayHead
+{
+    double bpm = 120.0;
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setBpm (bpm);
+        return info;
+    }
+};
+
+// The dry bass on its own through the effects: Mix 0 (no synth), routing Synth + Bass.
+std::unique_ptr<SubterraProcessor> fxProcessor (double rate = testRate, int block = testBlock)
+{
+    auto p = makeProcessor (rate, block);
+    setParam (*p, ParamIDs::mix, 0.0f);
+    setParam (*p, ParamIDs::fxRouting, 1.0f);
+    render (*p, silence (0.05, rate), block);   // let the routing settle
+    return p;
+}
+
+std::vector<float> impulses (double seconds, std::initializer_list<double> times, double rate = testRate)
+{
+    auto x = silence (seconds, rate);
+    for (auto t : times)
+        x[(size_t) (t * rate)] = 0.5f;
+    return x;
+}
+
+// Sum of samples in a window: one-pole filtering keeps it, so it measures a repeat's level.
+float windowSum (const std::vector<float>& x, size_t centre, size_t half = 60)
+{
+    double sum = 0.0;
+    for (size_t i = centre - half; i < centre + half && i < x.size(); ++i)
+        sum += x[i];
+    return (float) sum;
+}
+
+size_t peakIndex (const std::vector<float>& x, size_t from, size_t to)
+{
+    size_t best = from;
+    for (size_t i = from; i < std::min (to, x.size()); ++i)
+        if (std::abs (x[i]) > std::abs (x[best]))
+            best = i;
+    return best;
+}
+
+void testEffects()
+{
+    section ("Effects");
+    const auto note = concat (bassNote (55.0f, 0.8, 0.5f, testRate, 0.8f), silence (1.2));
+
+    auto with = [] (std::initializer_list<std::pair<const char*, float>> values)
+    {
+        return [values] (SubterraProcessor& p) { for (auto& [id, v] : values) setParam (p, id, v); };
+    };
+
+    // Every effect control changes the sound when its effect is on.
+    expectAffects (ParamIDs::chorusOn, 0.0f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::chorusMix, 1.0f } }));
+    expectAffects (ParamIDs::chorusRate, 0.1f, 4.0f, note, 1.0e-4f, with ({ { ParamIDs::chorusOn, 1.0f }, { ParamIDs::chorusMix, 1.0f } }));
+    expectAffects (ParamIDs::chorusDepth, 0.0f, 1.0f, note, 1.0e-4f, with ({ { ParamIDs::chorusOn, 1.0f }, { ParamIDs::chorusMix, 1.0f } }));
+    expectAffects (ParamIDs::chorusMix, 0.0f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::chorusOn, 1.0f } }));
+    expectAffects (ParamIDs::delayOn, 0.0f, 1.0f, note, 1.0e-3f, with ({}));
+    expectAffects (ParamIDs::delayTime, 120.0f, 600.0f, note, 1.0e-3f, with ({ { ParamIDs::delayOn, 1.0f }, { ParamIDs::delaySync, 0.0f } }));
+    expectAffects (ParamIDs::delayDivision, 2.0f, 5.0f, note, 1.0e-3f, with ({ { ParamIDs::delayOn, 1.0f } }));
+    expectAffects (ParamIDs::delaySync, 0.0f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::delayOn, 1.0f }, { ParamIDs::delayTime, 120.0f } }));
+    expectAffects (ParamIDs::delayFeedback, 0.0f, 0.8f, note, 1.0e-3f, with ({ { ParamIDs::delayOn, 1.0f } }));
+    expectAffects (ParamIDs::delayTone, 500.0f, 12000.0f, note, 1.0e-4f, with ({ { ParamIDs::delayOn, 1.0f }, { ParamIDs::delayFeedback, 0.7f } }));
+    expectAffects (ParamIDs::delayMix, 0.1f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::delayOn, 1.0f } }));
+    expectAffects (ParamIDs::reverbOn, 0.0f, 1.0f, note, 1.0e-3f, with ({}));
+    expectAffects (ParamIDs::reverbSize, 0.0f, 1.0f, note, 1.0e-4f, with ({ { ParamIDs::reverbOn, 1.0f }, { ParamIDs::reverbMix, 1.0f } }));
+    expectAffects (ParamIDs::reverbTone, 0.0f, 1.0f, note, 1.0e-4f, with ({ { ParamIDs::reverbOn, 1.0f }, { ParamIDs::reverbMix, 1.0f } }));
+    expectAffects (ParamIDs::reverbMix, 0.1f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::reverbOn, 1.0f } }));
+    expectAffects (ParamIDs::fxRouting, 0.0f, 1.0f, note, 1.0e-3f, with ({ { ParamIDs::reverbOn, 1.0f }, { ParamIDs::reverbMix, 1.0f } }));
+
+    // Effects that are off leave the sound exactly as it was.
+    {
+        auto plain = makeProcessor();
+        auto tweaked = makeProcessor();
+        for (auto [id, v] : { std::pair { ParamIDs::chorusMix, 1.0f }, { ParamIDs::delayMix, 1.0f }, { ParamIDs::delayFeedback, 0.9f },
+                              { ParamIDs::reverbMix, 1.0f }, { ParamIDs::reverbSize, 1.0f }, { ParamIDs::fxRouting, 1.0f } })
+            setParam (*tweaked, id, v);
+        expect (difference (render (*plain, note).left, render (*tweaked, note).left) < 1.0e-6f, "effect knobs do nothing while the effects are off");
+    }
+
+    // Routing "Synth": with Mix at 0 there's no synth, so the effects add nothing to the dry bass.
+    {
+        auto p = makeProcessor();
+        setParam (*p, ParamIDs::mix, 0.0f);
+        for (auto* id : { ParamIDs::chorusOn, ParamIDs::delayOn, ParamIDs::reverbOn })
+            setParam (*p, id, 1.0f);
+        p->prepareToPlay (testRate, testBlock);
+        expect (difference (render (*p, note).left, note) < 1.0e-4f, "routing Synth keeps the dry bass out of the effects");
+    }
+
+    // Delay timing, free.
+    {
+        auto p = fxProcessor();
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delaySync, 0.0f);
+        setParam (*p, ParamIDs::delayTime, 300.0f);
+        setParam (*p, ParamIDs::delayFeedback, 0.5f);
+        setParam (*p, ParamIDs::delayTone, 16000.0f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        auto out = render (*p, impulses (1.2, { 0.1 })).left;
+        const size_t hit = (size_t) (0.1 * testRate);
+        const size_t first = peakIndex (out, hit + 100, hit + (size_t) (0.5 * testRate));
+        const double firstMs = (double) (first - hit) * 1000.0 / testRate;
+        expect (std::abs (firstMs - 300.0) < 0.5, "Delay Time 300 ms repeats after " + juce::String (firstMs, 2) + " ms");
+        const float r1 = windowSum (out, hit + 14400), r2 = windowSum (out, hit + 28800);
+        expect (std::abs (r1 - 0.5f) < 0.01f, "first repeat at full level with Mix 100% (" + juce::String (r1, 3) + ")");
+        expect (std::abs (r2 / r1 - 0.5f) < 0.03f, "Feedback 50% halves each repeat (" + juce::String (r2 / r1, 3) + ")");
+    }
+
+    // Delay timing, synced to the host tempo.
+    for (auto [bpm, division, beats] : { std::tuple { 100.0, 5, 1.0 }, std::tuple { 100.0, 3, 0.75 }, std::tuple { 140.0, 2, 0.5 },
+                                         std::tuple { 90.0, 1, 1.0 / 3.0 } })
+    {
+        FakePlayHead head;
+        head.bpm = bpm;
+        auto p = fxProcessor();
+        p->setPlayHead (&head);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delaySync, 1.0f);
+        setParam (*p, ParamIDs::delayDivision, (float) division);
+        setParam (*p, ParamIDs::delayFeedback, 0.0f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        render (*p, silence (0.3));   // the delay time glides to the new tempo like tape
+        auto out = render (*p, impulses (1.5, { 0.1 })).left;
+        const size_t hit = (size_t) (0.1 * testRate);
+        const double ms = (double) (peakIndex (out, hit + 100, out.size()) - hit) * 1000.0 / testRate;
+        const double expected = beats * 60000.0 / bpm;
+        expect (std::abs (ms - expected) < 1.0, "synced delay at " + juce::String (bpm) + " BPM, division " + juce::String (division)
+                                                  + ": " + juce::String (ms, 1) + " ms (expected " + juce::String (expected, 1) + ")");
+        expect (std::abs (p->hostTempo.load() - (float) bpm) < 0.01f, "host tempo is read from the play head");
+        p->setPlayHead (nullptr);
+    }
+
+    // Very slow tempo with the longest division stays within the delay memory.
+    {
+        FakePlayHead head;
+        head.bpm = 20.0;
+        auto p = fxProcessor();
+        p->setPlayHead (&head);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delayDivision, 7.0f);
+        setParam (*p, ParamIDs::delayFeedback, 0.95f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        auto out = render (*p, concat (note, note));
+        expect (allFinite (out), "6 s synced delay at 20 BPM stays finite");
+        p->setPlayHead (nullptr);
+    }
+
+    // Trails: switching the delay off stops new input but lets the repeats ring out.
+    {
+        auto p = fxProcessor();
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delaySync, 0.0f);
+        setParam (*p, ParamIDs::delayTime, 200.0f);
+        setParam (*p, ParamIDs::delayFeedback, 0.6f);
+        setParam (*p, ParamIDs::delayTone, 16000.0f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        const auto input = concat (impulses (1.0, { 0.1, 0.45 }), silence (12.0));
+        const int offBlock = (int) (0.35 * testRate / testBlock);
+        auto out = render (*p, input, testBlock, [&] (int b) { if (b == offBlock) setParam (*p, ParamIDs::delayOn, 0.0f); }).left;
+        const size_t hit = (size_t) (0.1 * testRate), d = (size_t) (0.2 * testRate);
+        expect (windowSum (out, hit + 2 * d) > 0.15f, "delay repeats keep going after it's switched off");
+        expect (std::abs (windowSum (out, (size_t) (0.45 * testRate) + d)) < 0.02f, "a switched-off delay takes no new input");
+        expect (rms (out, out.size() - (size_t) testRate) < 1.0e-7f, "the repeats die away completely");
+    }
+
+    // Reverb tail, its length set by Size, and trails.
+    {
+        auto tail = [] (float size)
+        {
+            auto p = fxProcessor();
+            setParam (*p, ParamIDs::reverbOn, 1.0f);
+            setParam (*p, ParamIDs::reverbSize, size);
+            setParam (*p, ParamIDs::reverbMix, 1.0f);
+            return render (*p, impulses (3.0, { 0.1 })).left;
+        };
+        const auto small = tail (0.0f), large = tail (1.0f);
+        const float smallLate = rms (small, (size_t) (1.0 * testRate), (size_t) (1.5 * testRate));
+        const float largeLate = rms (large, (size_t) (1.0 * testRate), (size_t) (1.5 * testRate));
+        expect (rms (large, (size_t) (0.2 * testRate), (size_t) (0.6 * testRate)) > 1.0e-3f, "reverb produces a tail");
+        expect (largeLate > smallLate * 4.0f, "a bigger Size rings longer (" + juce::String (smallLate, 6) + " vs " + juce::String (largeLate, 6) + ")");
+
+        auto p = fxProcessor();
+        setParam (*p, ParamIDs::reverbOn, 1.0f);
+        setParam (*p, ParamIDs::reverbSize, 0.8f);
+        setParam (*p, ParamIDs::reverbMix, 1.0f);
+        const int offBlock = (int) (0.2 * testRate / testBlock);
+        auto out = render (*p, concat (impulses (1.0, { 0.1 }), silence (25.0)), testBlock,
+                           [&] (int b) { if (b == offBlock) setParam (*p, ParamIDs::reverbOn, 0.0f); }).left;
+        expect (rms (out, (size_t) (0.3 * testRate), (size_t) (0.6 * testRate)) > 1.0e-3f, "reverb tail rings out after switching off");
+        expect (rms (out, out.size() - (size_t) testRate) < 1.0e-7f, "the reverb tail dies away completely");
+    }
+
+    // Chorus is stereo: the left and right sides differ, while without it they match.
+    {
+        auto p = fxProcessor();
+        setParam (*p, ParamIDs::chorusOn, 1.0f);
+        setParam (*p, ParamIDs::chorusMix, 1.0f);
+        setParam (*p, ParamIDs::chorusDepth, 1.0f);
+        auto out = render (*p, note);
+        expect (difference (out.left, out.right) > 1.0e-3f, "chorus widens to stereo");
+
+        auto q = fxProcessor();
+        auto mono = render (*q, note);
+        expect (difference (mono.left, mono.right) < 1.0e-7f, "without effects a mono input stays centred");
+    }
+
+    // Runaway feedback is kept in check.
+    {
+        auto p = fxProcessor();
+        setParam (*p, ParamIDs::inputGain, 24.0f);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delaySync, 0.0f);
+        setParam (*p, ParamIDs::delayTime, 10.0f);
+        setParam (*p, ParamIDs::delayFeedback, 0.95f);
+        setParam (*p, ParamIDs::delayTone, 16000.0f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        setParam (*p, ParamIDs::reverbOn, 1.0f);
+        setParam (*p, ParamIDs::reverbMix, 1.0f);
+        setParam (*p, ParamIDs::reverbSize, 1.0f);
+        auto out = render (*p, concat (note, note));
+        float peak = 0.0f;
+        for (auto v : out.left)
+            peak = std::max (peak, std::abs (v));
+        expect (allFinite (out) && peak < 40.0f, "maximum feedback stays bounded (peak " + juce::String (peak, 2) + ")");
+    }
+
+    // Changing sample rate keeps delay times right.
+    {
+        auto p = fxProcessor (44100.0);
+        p->prepareToPlay (96000.0, 512);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        setParam (*p, ParamIDs::delaySync, 0.0f);
+        setParam (*p, ParamIDs::delayTime, 250.0f);
+        setParam (*p, ParamIDs::delayFeedback, 0.0f);
+        setParam (*p, ParamIDs::delayMix, 1.0f);
+        render (*p, silence (0.1, 96000.0), 512);
+        auto out = render (*p, impulses (0.6, { 0.1 }, 96000.0), 512).left;
+        const size_t hit = (size_t) (0.1 * 96000.0);
+        const double ms = (double) (peakIndex (out, hit + 100, out.size()) - hit) * 1000.0 / 96000.0;
+        expect (std::abs (ms - 250.0) < 0.5, "delay time is right after a sample-rate change (" + juce::String (ms, 2) + " ms)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Playing like a real bass: plucked strings with noise and hum, and legato lines.
+
+std::vector<float> pluckedString (float hz, double seconds, std::mt19937& rng, float peak = 0.6f)
+{
+    // Karplus-Strong: a softened noise burst circulating in a lossy delay loop one period long.
+    const int n = (int) (seconds * testRate);
+    const auto len = (size_t) std::floor (testRate / hz);
+    std::uniform_real_distribution<float> burst (-1.0f, 1.0f);
+    std::vector<float> loop (len);
+    for (auto& v : loop)
+        v = burst (rng);
+    for (int pass = 0; pass < 3; ++pass)
+        for (size_t i = 1; i < len; ++i)
+            loop[i] = 0.5f * (loop[i] + loop[i - 1]);
+
+    std::vector<float> out ((size_t) n);
+    float prev = 0.0f;
+    for (size_t i = 0, pos = 0; i < (size_t) n; ++i, pos = (pos + 1) % len)
+    {
+        const float x = loop[pos];
+        loop[pos] = 0.997f * 0.5f * (x + prev);
+        prev = x;
+        out[i] = x * peak * std::min (1.0f, (float) i / 48.0f);
+    }
+    return out;
+}
+
+void addNoiseAndHum (std::vector<float>& x, std::mt19937& rng)
+{
+    // Pickup noise around -66 dBFS and 60 Hz mains hum at -60 dBFS, like a single-coil bass into an interface.
+    std::normal_distribution<float> noise (0.0f, 0.0005f);
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] += noise (rng) + 0.001f * (float) std::sin (juce::MathConstants<double>::twoPi * 60.0 * (double) i / testRate);
+}
+
+void testRealPlaying()
+{
+    section ("Playing like a real bass");
+    std::mt19937 rng (11);
+
+    // Each note of the four open strings and some fretted notes, plucked with noise and mains hum.
+    const float notes[] = { 41.2f, 55.0f, 73.42f, 98.0f, 49.0f, 65.41f, 87.31f, 130.8f };
+    std::vector<float> line;
+    for (float hz : notes)
+        line = concat (line, pluckedString (hz, 0.6, rng));
+    line = concat (line, silence (0.4));
+    addNoiseAndHum (line, rng);
+
+    auto p = makeProcessor();
+    std::vector<float> readings;
+    render (*p, line, testBlock, [&] (int) { readings.push_back (p->detectedFrequency.load()); });
+
+    const double blockSeconds = (double) testBlock / testRate;
+    for (size_t n = 0; n < std::size (notes); ++n)
+    {
+        // Reading 0.3 s into each note (the length of string's own tuning is approximate, hence 15 cents).
+        const size_t block = (size_t) (((double) n * 0.6 + 0.3) / blockSeconds);
+        const float heard = readings[block];
+        const float tuneHz = (float) (testRate / std::floor (testRate / notes[n]));   // pitch the integer string length gives
+        expect (heard > 0.0f && std::abs (centsBetween (heard, tuneHz)) < 15.0f,
+                "plucked " + juce::String (notes[n]) + " Hz read as " + juce::String (heard, 2) + " Hz");
+    }
+    expect (juce::exactlyEqual (readings.back(), 0.0f), "readout clears after the line ends, with only noise and hum left ("
+                                                         + juce::String (readings.back(), 2) + " Hz)");
+
+    // A very noisy instrument (hum at -40 dBFS) doesn't trigger the synth on its own once Tracking is turned down.
+    {
+        auto q = makeProcessor();
+        setParam (*q, ParamIDs::mix, 1.0f);
+        setParam (*q, ParamIDs::tracking, 0.3f);
+        std::vector<float> hum ((size_t) (2.0 * testRate));
+        for (size_t i = 0; i < hum.size(); ++i)
+            hum[i] = 0.01f * (float) std::sin (juce::MathConstants<double>::twoPi * 60.0 * (double) i / testRate);
+        auto out = render (*q, hum);
+        expect (rms (out.left, (size_t) testRate) < 1.0e-4f, "hum alone doesn't start the synth with Tracking at 30%");
+    }
+
+    // The synth plays the right note.
+    {
+        auto q = makeProcessor();
+        setParam (*q, ParamIDs::mix, 1.0f);
+        setParam (*q, ParamIDs::wave, 0.0f);
+        setParam (*q, ParamIDs::filter, 12000.0f);
+        setParam (*q, ParamIDs::env, 0.0f);
+        setParam (*q, ParamIDs::glide, 1.0f);
+        auto pluck = pluckedString (55.0f, 1.0, rng);
+        addNoiseAndHum (pluck, rng);
+        auto out = render (*q, pluck);
+        const float synthHz = zeroCrossingPitch (out.left, (size_t) (0.3 * testRate), (size_t) (0.7 * testRate));
+        const float tuneHz = (float) (testRate / std::floor (testRate / 55.0));
+        expect (std::abs (centsBetween (synthHz, tuneHz)) < 10.0f, "synth plays a plucked A at " + juce::String (synthHz, 2) + " Hz");
+    }
+
+    // Legato: notes run into each other without gaps (hammer-ons, slides between frets).
+    {
+        const float legato[] = { 55.0f, 61.74f, 65.41f, 73.42f, 82.41f, 73.42f, 65.41f, 55.0f };
+        std::vector<float> run;
+        for (float hz : legato)
+            run = concat (run, bassNote (hz, 0.35, 0.45f, testRate, 0.4f));
+        addNoiseAndHum (run, rng);
+        auto q = makeProcessor();
+        std::vector<float> heard;
+        render (*q, run, testBlock, [&] (int) { heard.push_back (q->detectedFrequency.load()); });
+        int good = 0;
+        for (size_t n = 0; n < std::size (legato); ++n)
+        {
+            const size_t block = (size_t) (((double) n * 0.35 + 0.25) / blockSeconds);
+            if (std::abs (centsBetween (heard[block], legato[n])) < 20.0f)
+                ++good;
+            else
+                std::printf ("    legato note %d: %.2f Hz read as %.2f\n", (int) n, legato[n], heard[block]);
+        }
+        expect (good == (int) std::size (legato), "legato line tracked note for note (" + juce::String (good) + "/8)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// No clicks: switches and knob jumps during a sustained note.
+
+float maxStep (const std::vector<float>& x, size_t from, size_t to)
+{
+    float m = 0.0f;
+    for (size_t i = std::max<size_t> (from, 1); i < std::min (to, x.size()); ++i)
+        m = std::max (m, std::abs (x[i] - x[i - 1]));
+    return m;
+}
+
+void testNoClicks()
+{
+    section ("No clicks or zipper noise");
+    // A long, steady note so any jump stands out.
+    std::vector<float> held ((size_t) (2.5 * testRate));
+    for (size_t i = 0; i < held.size(); ++i)
+        held[i] = 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * 55.0 * (double) i / testRate);
+
+    struct Change { const char* id; float from, to; };
+    const Change changes[] = {
+        { ParamIDs::bypass, 0, 1 }, { ParamIDs::hold, 0, 1 }, { ParamIDs::tuner, 0, 1 },
+        { ParamIDs::inFilterOn, 0, 1 }, { ParamIDs::outFilterOn, 0, 1 }, { ParamIDs::chorusOn, 0, 1 },
+        { ParamIDs::delayOn, 0, 1 }, { ParamIDs::delayOn, 1, 0 }, { ParamIDs::reverbOn, 0, 1 }, { ParamIDs::reverbOn, 1, 0 },
+        { ParamIDs::fxRouting, 0, 1 }, { ParamIDs::mix, 0.0f, 1.0f }, { ParamIDs::mix, 1.0f, 0.0f },
+        { ParamIDs::outputGain, -12.0f, 12.0f }, { ParamIDs::inputGain, -12.0f, 12.0f }, { ParamIDs::filter, 200.0f, 8000.0f },
+        { ParamIDs::drive, 0.0f, 1.0f }, { ParamIDs::reso, 0.0f, 1.0f }, { ParamIDs::chorusMix, 0.0f, 1.0f },
+        { ParamIDs::delayMix, 0.0f, 1.0f }, { ParamIDs::reverbMix, 0.0f, 1.0f }, { ParamIDs::outLowPass, 20000.0f, 600.0f },
+    };
+
+    for (const auto& c : changes)
+    {
+        for (bool fxRouted : { false, true })
+        {
+            auto p = makeProcessor();
+            setParam (*p, ParamIDs::wave, 0.0f);
+            setParam (*p, ParamIDs::env, 0.0f);
+            setParam (*p, ParamIDs::mix, 0.6f);
+            setParam (*p, ParamIDs::fxRouting, fxRouted ? 1.0f : 0.0f);
+            setParam (*p, ParamIDs::outFilterOn, 1.0f);
+            if (c.id != ParamIDs::delayOn && c.id != ParamIDs::reverbOn)
+            {
+                setParam (*p, ParamIDs::delayOn, 1.0f);
+                setParam (*p, ParamIDs::reverbOn, 1.0f);
+            }
+            if (std::string (c.id) == ParamIDs::outFilterOn)
+                setParam (*p, ParamIDs::outLowPass, 800.0f);
+            setParam (*p, c.id, c.from);
+            p->prepareToPlay (testRate, testBlock);
+
+            const int changeBlock = (int) (1.5 * testRate / testBlock) ;
+            const size_t at = (size_t) changeBlock * testBlock + 100;   // mid-block via a 100-sample offset render
+            // Shift the input so the change lands mid-way through the processor's internal chunk.
+            auto out = render (*p, held, testBlock, [&] (int b) { if (b == changeBlock) setParam (*p, c.id, c.to); }).left;
+            // A click is a jump bigger than anything in the steady sound before or after the change.
+            const float before = maxStep (out, (size_t) (1.2 * testRate), at - 200);
+            const float after = maxStep (out, at + (size_t) (0.1 * testRate), at + (size_t) (0.4 * testRate));
+            const float during = maxStep (out, at - 120, at + (size_t) (0.1 * testRate));
+            const float limit = std::max ({ before, after, 0.003f }) * 1.5f + 0.003f;
+            expect (during < limit, juce::String (c.id) + " " + juce::String (c.from) + " -> " + juce::String (c.to)
+                                        + (fxRouted ? " (synth + bass)" : "") + " is smooth (step " + juce::String (during, 4)
+                                        + ", steady " + juce::String (before, 4) + " / " + juce::String (after, 4) + ")");
+        }
+    }
+
+    // A fast filter sweep, as automation: no zipper steps.
+    {
+        auto p = makeProcessor();
+        setParam (*p, ParamIDs::wave, 0.0f);
+        setParam (*p, ParamIDs::mix, 1.0f);
+        const int blocks = (int) (held.size() / 64);
+        auto out = render (*p, held, 64, [&] (int b) { setParam (*p, ParamIDs::filter, 40.0f * std::pow (300.0f, (float) b / (float) blocks)); }).left;
+        expect (maxStep (out, (size_t) (0.3 * testRate), out.size()) < 0.05f, "filter automation sweep is smooth");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host behaviour: block sizes, automation, threads, old sessions, CPU.
+
+void testHostBehaviour()
+{
+    section ("Host behaviour");
+    std::mt19937 rng (3);
+    auto line = concat (concat (bassNote (41.2f, 0.6, 0.5f), bassNote (73.42f, 0.6, 0.5f)), silence (0.3));
+    addNoiseAndHum (line, rng);
+
+    // The host's block size doesn't change the sound.
+    {
+        auto renderAt = [&] (int block)
+        {
+            auto p = makeProcessor (testRate, block);
+            for (auto* id : { ParamIDs::chorusOn, ParamIDs::delayOn, ParamIDs::reverbOn })
+                setParam (*p, id, 1.0f);
+            p->prepareToPlay (testRate, block);
+            return render (*p, line, block).left;
+        };
+        const auto reference = renderAt (256);
+        for (int block : { 1, 7, 64, 255, 257, 1000, 4096 })
+        {
+            const float d = difference (reference, renderAt (block));
+            expect (d < 1.0e-5f, "block size " + juce::String (block) + " sounds the same as 256 (difference " + juce::String (d, 7) + ")");
+        }
+    }
+
+    // Sample-accurate-ish automation at block size 1: every parameter moving every sample stays finite.
+    {
+        auto p = makeProcessor (testRate, 1);
+        std::uniform_real_distribution<float> uni (0.0f, 1.0f);
+        auto params = p->getParameters();
+        auto out = render (*p, line, 1, [&] (int b)
+        {
+            if (b % 32 == 0)
+                for (auto* param : params)
+                    if (param != p->getBypassParameter())
+                        param->setValueNotifyingHost (uni (rng));
+        });
+        expect (allFinite (out), "automating every parameter at block size 1 stays finite");
+    }
+
+    // Presets, A/B and state from the UI thread while audio runs.
+    {
+        auto p = makeProcessor();
+        const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("subterra-thread-presets");
+        temp.deleteRecursively();
+        p->getPresets().setUserFolder (temp);
+
+        std::atomic<bool> stop { false }, bad { false };
+        std::atomic<int> blocks { 0 };
+        std::thread audio ([&]
+        {
+            juce::AudioBuffer<float> buffer (2, testBlock);
+            juce::MidiBuffer midi;
+            size_t pos = 0;
+            while (! stop.load())
+            {
+                for (int i = 0; i < testBlock; ++i, pos = (pos + 1) % line.size())
+                    buffer.setSample (0, i, line[pos]), buffer.setSample (1, i, line[pos]);
+                p->processBlock (buffer, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < testBlock; ++i)
+                        if (! std::isfinite (buffer.getSample (ch, i)))
+                            bad = true;
+                ++blocks;
+            }
+        });
+
+        auto& presets = p->getPresets();
+        std::uniform_real_distribution<float> uni (0.0f, 1.0f);
+        for (int i = 0; i < 400; ++i)
+        {
+            presets.loadPreset (i % presets.getNumPresets());
+            if (i % 3 == 0) p->switchSlot();
+            if (i % 7 == 0) p->copyActiveSlotToOther();
+            juce::MemoryBlock state;
+            p->getStateInformation (state);
+            if (i % 5 == 0) p->setStateInformation (state.getData(), (int) state.getSize());
+            if (i % 40 == 0) presets.saveUserPreset ("Thread test " + juce::String (i / 40));
+            if (i % 60 == 0) presets.rescanUserPresets();
+            p->getParameters()[(int) (uni (rng) * 30.0f)]->setValueNotifyingHost (uni (rng));
+            juce::ignoreUnused (p->getProgramName (i % p->getNumPrograms()));
+        }
+        stop = true;
+        audio.join();
+        expect (! bad.load() && blocks.load() > 10, "audio stays clean while presets, A/B and state change (" + juce::String (blocks.load()) + " blocks)");
+        temp.deleteRecursively();
+    }
+
+    // A session saved by version 0.1 (no effect parameters) opens with the effects off.
+    {
+        auto old = makeProcessor();
+        juce::MemoryBlock saved;
+        old->getStateInformation (saved);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize());
+        auto tree = juce::ValueTree::fromXml (*xml);
+        for (int i = tree.getNumChildren(); --i >= 0;)
+        {
+            const auto id = tree.getChild (i).getProperty ("id").toString();
+            if (id.startsWith ("chorus") || id.startsWith ("delay") || id.startsWith ("reverb") || id == ParamIDs::fxRouting)
+                tree.removeChild (i, nullptr);
+        }
+        setParam (*old, ParamIDs::filter, 2500.0f);
+        juce::MemoryBlock legacy;
+        juce::AudioProcessor::copyXmlToBinary (*tree.createXml(), legacy);
+
+        auto p = makeProcessor();
+        setParam (*p, ParamIDs::reverbOn, 1.0f);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        p->setStateInformation (legacy.getData(), (int) legacy.getSize());
+        expect (getParam (*p, ParamIDs::reverbOn) < 0.5f && getParam (*p, ParamIDs::delayOn) < 0.5f, "an older session opens with the effects off");
+        expect (std::abs (getParam (*p, ParamIDs::filter) - getParam (*old, ParamIDs::filter)) > 1.0f
+                    || std::abs (getParam (*p, ParamIDs::filter) - 600.0f) < 1.0f, "an older session keeps its own pedal settings");
+    }
+
+    // A user preset saved by version 0.1 loads with the effects off, not left over from the last sound.
+    {
+        auto p = makeProcessor();
+        const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("subterra-legacy-presets");
+        temp.deleteRecursively();
+        temp.createDirectory();
+        temp.getChildFile ("Old Sound.subterrapreset")
+            .replaceWithText ("<Preset name=\"Old Sound\"><Param id=\"filter\" value=\"1234\"/><Param id=\"mix\" value=\"0.9\"/></Preset>");
+        auto& presets = p->getPresets();
+        presets.setUserFolder (temp);
+        setParam (*p, ParamIDs::delayOn, 1.0f);
+        for (int i = 0; i < presets.getNumPresets(); ++i)
+            if (presets.getPreset (i).name == "Old Sound")
+                presets.loadPreset (i);
+        expect (std::abs (getParam (*p, ParamIDs::filter) - 1234.0f) < 1.0f, "older preset loads its values");
+        expect (getParam (*p, ParamIDs::delayOn) < 0.5f, "older preset turns effects off");
+        temp.deleteRecursively();
+    }
+
+    // Damaged session data is ignored.
+    {
+        auto p = makeProcessor();
+        setParam (*p, ParamIDs::filter, 3000.0f);
+        std::uniform_int_distribution<int> byte (0, 255);
+        for (int attempt = 0; attempt < 50; ++attempt)
+        {
+            juce::MemoryBlock junk ((size_t) (1 + attempt * 37));
+            for (size_t i = 0; i < junk.getSize(); ++i)
+                junk[i] = (char) byte (rng);
+            p->setStateInformation (junk.getData(), (int) junk.getSize());
+        }
+        p->setStateInformation (nullptr, 0);
+        expect (std::abs (getParam (*p, ParamIDs::filter) - 3000.0f) < 1.0f, "damaged session data leaves the sound alone");
+    }
+
+    // CPU: 20 s of audio with everything on.
+    {
+        auto p = makeProcessor();
+        for (auto* id : { ParamIDs::chorusOn, ParamIDs::delayOn, ParamIDs::reverbOn, ParamIDs::inFilterOn, ParamIDs::outFilterOn })
+            setParam (*p, id, 1.0f);
+        std::vector<float> long20;
+        while (long20.size() < (size_t) (20.0 * testRate))
+            long20 = concat (long20, line);
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        render (*p, long20);
+        const double seconds = (juce::Time::getMillisecondCounterHiRes() - start) / 1000.0;
+        const double load = seconds / ((double) long20.size() / testRate) * 100.0;
+        std::printf ("  CPU with every effect on: %.2f%% of one core at 48 kHz\n", load);
+        expect (load < 15.0, "CPU use is low (" + juce::String (load, 2) + "% of one core)");
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -681,6 +1299,10 @@ int main()
     testEveryControl();
     testPresetsAndState();
     testRobustness();
+    testEffects();
+    testRealPlaying();
+    testNoClicks();
+    testHostBehaviour();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);
     return failures;

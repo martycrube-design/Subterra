@@ -124,6 +124,42 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
                                })
                                .withValueFromStringFunction ([] (const juce::String& t) { return juce::jmax (1.0f, t.getFloatValue()); })));
 
+    // Effects
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { fxRouting, 1 }, "FX Routing", juce::StringArray { "Synth", "Synth + Bass" }, 0));
+
+    layout.add (makeBool (chorusOn, "Chorus", false));
+    layout.add (makeFloat (chorusRate, "Chorus Rate", logRange (0.05f, 5.0f), 0.6f,
+                           FloatAttributes().withLabel ("Hz")
+                               .withStringFromValueFunction ([] (float v, int) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; })
+                               .withValueFromStringFunction ([] (const juce::String& t) { return t.getFloatValue(); })));
+    layout.add (makeFloat (chorusDepth, "Chorus Depth", Range (0.0f, 1.0f), 0.5f, percent()));
+    layout.add (makeFloat (chorusMix, "Chorus Mix", Range (0.0f, 1.0f), 0.5f, percent()));
+
+    layout.add (makeBool (delayOn, "Delay", false));
+    layout.add (makeBool (delaySync, "Delay Sync", true));
+    layout.add (makeFloat (delayTime, "Delay Time", logRange (10.0f, 2000.0f), 350.0f,
+                           FloatAttributes().withLabel ("ms")
+                               .withStringFromValueFunction ([] (float v, int) {
+                                   return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " s" : juce::String (juce::roundToInt (v)) + " ms";
+                               })
+                               .withValueFromStringFunction ([] (const juce::String& t) {
+                                   const auto v = t.getFloatValue();
+                                   const bool seconds = ! t.containsIgnoreCase ("ms") && t.trim().endsWithIgnoreCase ("s");
+                                   return seconds ? v * 1000.0f : v;
+                               })));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { delayDivision, 1 }, "Delay Division",
+        juce::StringArray { "1/16", "1/8 T", "1/8", "1/8 D", "1/4 T", "1/4", "1/4 D", "1/2" }, defaultDelayDivision));
+    layout.add (makeFloat (delayFeedback, "Delay Feedback", Range (0.0f, 0.95f), 0.35f, percent()));
+    layout.add (makeFloat (delayTone, "Delay Tone", logRange (400.0f, 16000.0f), 4000.0f, hertz()));
+    layout.add (makeFloat (delayMix, "Delay Mix", Range (0.0f, 1.0f), 0.3f, percent()));
+
+    layout.add (makeBool (reverbOn, "Reverb", false));
+    layout.add (makeFloat (reverbSize, "Reverb Size", Range (0.0f, 1.0f), 0.5f, percent()));
+    layout.add (makeFloat (reverbTone, "Reverb Tone", Range (0.0f, 1.0f), 0.5f, percent()));
+    layout.add (makeFloat (reverbMix, "Reverb Mix", Range (0.0f, 1.0f), 0.25f, percent()));
+
     return layout;
 }
 }

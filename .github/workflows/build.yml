@@ -33,11 +33,13 @@ jobs:
       - name: Engine tests
         run: ./build/SubterraTests_artefacts/Release/SubterraTests
 
-      - name: Every control drives the engine
+      - name: Every control and menu works
         run: xvfb-run -a ./build/SubterraSnapshot_artefacts/Release/SubterraSnapshot --check
 
       - name: Screenshot
-        run: xvfb-run -a ./build/SubterraSnapshot_artefacts/Release/SubterraSnapshot subterra-ui.png 1 note=41.2
+        run: |
+          xvfb-run -a ./build/SubterraSnapshot_artefacts/Release/SubterraSnapshot subterra-ui.png 1 note=41.2
+          xvfb-run -a ./build/SubterraSnapshot_artefacts/Release/SubterraSnapshot subterra-effects.png 1 page=1 chorusOn=1 delayOn=1 reverbOn=1
 
       - name: pluginval
         run: |
@@ -53,6 +55,7 @@ jobs:
             build/Subterra_artefacts/Release/VST3/Subterra.vst3
             build/Subterra_artefacts/Release/Standalone/Subterra
             subterra-ui.png
+            subterra-effects.png
 
   macos:
     runs-on: macos-15

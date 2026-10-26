@@ -226,4 +226,17 @@ juce::Rectangle<int> SubterraLookAndFeel::getTooltipBounds (const juce::String& 
                                  screenPos.y > parentArea.getCentreY() ? screenPos.y - (h + 6) : screenPos.y + 6, w, h)
         .constrainedWithin (parentArea);
 }
+
+void SubterraLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor&)
+{
+    g.setColour (juce::Colour (0xff121315));
+    g.fillRoundedRectangle (juce::Rectangle<float> ((float) width, (float) height), 8.0f);
+}
+
+void SubterraLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
+{
+    const bool focused = editor.hasKeyboardFocus (true) && ! editor.isReadOnly();
+    g.setColour (Colours::frameInk.withAlpha (focused ? 0.6f : 0.2f));
+    g.drawRoundedRectangle (juce::Rectangle<float> ((float) width, (float) height).reduced (0.5f), 8.0f, focused ? 1.5f : 1.0f);
+}
 }

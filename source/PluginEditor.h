@@ -3,102 +3,29 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "PluginProcessor.h"
-#include "ui/SubterraLookAndFeel.h"
+#include "ui/EffectsPage.h"
+#include "ui/Header.h"
+#include "ui/Overlay.h"
+#include "ui/PedalPage.h"
 
 namespace subterra
 {
-using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-
-class Knob final : public juce::Slider
+// The two pages below the header. Switching slides one out and the other in.
+class PageStack final : public juce::Component
 {
 public:
-    Knob (KnobStyle, const juce::String& title, const juce::String& tooltip);
-};
-
-// Pill switch drawn as "( ) OFF" / "(o) ON", optionally inside a labelled outer pill (the Tuner button).
-class PillToggle final : public juce::Button
-{
-public:
-    PillToggle (SubterraLookAndFeel&, const juce::String& title, const juce::String& outerLabel = {});
-    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    PageStack (juce::Component& first, juce::Component& second);
+    void show (int index, bool animate);
+    int getIndex() const { return index; }
+    bool isAnimating() const { return slide.isRunning(); }
+    void resized() override { layout(); }
 
 private:
-    SubterraLookAndFeel& lnf;
-    juce::String outerLabel;
-};
-
-// 32 px round button with an icon or short text.
-class RoundButton final : public juce::Button
-{
-public:
-    RoundButton (SubterraLookAndFeel&, const juce::String& title, juce::Path icon, bool iconFilled = false);
-    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
-    std::function<void (juce::Graphics&, juce::Rectangle<float>)> drawContent;
-
-private:
-    SubterraLookAndFeel& lnf;
-    juce::Path icon;
-    bool filled;
-};
-
-// Text-only button for the preset arrows and the preset name.
-class FlatTextButton final : public juce::Button
-{
-public:
-    FlatTextButton (SubterraLookAndFeel&, const juce::String& title, float fontSize, int weight);
-    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
-
-private:
-    SubterraLookAndFeel& lnf;
-    float fontSize;
-    int weight;
-};
-
-class Footswitch final : public juce::Button
-{
-public:
-    explicit Footswitch (const juce::String& title);
-    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
-};
-
-class StereoMeter final : public juce::Component
-{
-public:
-    void setLevels (float left, float right);
-    void paint (juce::Graphics&) override;
-
-private:
-    float levels[2] {};
-};
-
-class NoteDisplay final : public juce::Component
-{
-public:
-    explicit NoteDisplay (SubterraLookAndFeel&);
-    void update (float frequency, bool tunerOn, float reference);
-    void paint (juce::Graphics&) override;
-
-private:
-    SubterraLookAndFeel& lnf;
-    float frequency = 0.0f, reference = 440.0f;
-    bool tunerOn = false;
-};
-
-class PedalBody final : public juce::Component
-{
-public:
-    explicit PedalBody (SubterraLookAndFeel&);
-    void setLeds (bool active, bool hold);
-    void paint (juce::Graphics&) override;
-
-    Knob wave, octave, filter, reso, env, drive, mix;
-    Footswitch bypassSwitch { "Bypass footswitch" }, holdSwitch { "Hold footswitch" };
-
-private:
-    void paintLed (juce::Graphics&, juce::Point<float> topLeft, bool lit);
-    SubterraLookAndFeel& lnf;
-    bool activeLed = true, holdLed = false;
+    void layout();
+    juce::Component* pages[2];
+    int index = 0;
+    Tween slide;
+    FrameDriver frames { *this, [this] { if (! slide.update()) return false; layout(); return false; } };
 };
 
 class SubterraEditor final : public juce::AudioProcessorEditor, private juce::Timer
@@ -110,22 +37,29 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-private:
-    class Panel;
+    static constexpr int designWidth = 740, designHeight = 900;
 
-    void timerCallback() override;
-    void showPresetMenu();
+    // Page and menu actions, also driven by the UI checks in tools/Snapshot.cpp.
+    void showPage (int page, bool animate = true);
+    int getPage() const;
+    void showPresetBrowser();
     void showSettingsMenu();
     void showSaveDialog();
     void showAbMenu();
+    void confirmDeletePreset (int index);
+    Overlay& getOverlay();
+    Toast& getToast();
+
+private:
+    class Content;
+
+    void timerCallback() override;
     void refreshPresetName();
 
     SubterraProcessor& processor;
     SubterraLookAndFeel lnf;
-    std::unique_ptr<Panel> panel;
-    juce::TooltipWindow tooltips { this, 600 };
-    std::unique_ptr<juce::AlertWindow> saveDialog;
-
+    std::unique_ptr<Content> content;
+    juce::TooltipWindow tooltips { this, 700 };
     float meterDisplay[4] {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SubterraEditor)

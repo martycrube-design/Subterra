@@ -5,6 +5,7 @@
 
 #include "Parameters.h"
 #include "Presets.h"
+#include "dsp/Effects.h"
 #include "dsp/PitchTracker.h"
 #include "dsp/SynthVoice.h"
 
@@ -43,7 +44,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override { return 8.0; }
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -60,7 +61,7 @@ public:
     PresetManager& getPresets() noexcept { return presets; }
 
     // A/B comparison: two sound slots, one of them live.
-    int getActiveSlot() const noexcept { return activeSlot; }
+    int getActiveSlot() const noexcept { return activeSlot.load(); }
     void switchSlot();
     void copyActiveSlotToOther();
 
@@ -68,20 +69,28 @@ public:
     std::atomic<float> tunerReference { 440.0f };
     std::atomic<bool> tunerMutesOutput { true };
     std::atomic<float> editorScale { 1.0f };
+    std::atomic<int> editorPage { 0 };   // 0 pedal, 1 effects
 
     // Read by the UI.
     PeakMeter inputMeters[2], outputMeters[2];
     std::atomic<float> detectedFrequency { 0.0f };   // the bass note being played, 0 if none
     std::atomic<bool> holdEngaged { false };
+    std::atomic<float> hostTempo { 120.0f };
+
+    // Internal processing block; larger host blocks are split into these.
+    static constexpr int maxChunk = 256;
 
 private:
     void updateFilters();
+    void processChunk (const float* rawL, const float* rawR, float* outL, float* outR, int numSamples, bool haveInput);
+    void resetDsp();
+    juce::ValueTree captureSlot() const;
 
     juce::AudioProcessorValueTreeState apvts;
     PresetManager presets;
 
     juce::ValueTree slots[2];
-    int activeSlot = 0;
+    std::atomic<int> activeSlot { 0 };
 
     struct Params
     {
@@ -92,7 +101,14 @@ private:
         std::atomic<float>* reso; std::atomic<float>* env; std::atomic<float>* drive; std::atomic<float>* mix;
         std::atomic<float>* bypass; std::atomic<float>* hold; std::atomic<float>* tracking;
         std::atomic<float>* glide; std::atomic<float>* tuner;
+        std::atomic<float>* fxRouting;
+        std::atomic<float>* chorusOn; std::atomic<float>* chorusRate; std::atomic<float>* chorusDepth; std::atomic<float>* chorusMix;
+        std::atomic<float>* delayOn; std::atomic<float>* delaySync; std::atomic<float>* delayTime; std::atomic<float>* delayDivision;
+        std::atomic<float>* delayFeedback; std::atomic<float>* delayTone; std::atomic<float>* delayMix;
+        std::atomic<float>* reverbOn; std::atomic<float>* reverbSize; std::atomic<float>* reverbTone; std::atomic<float>* reverbMix;
     } params {};
+
+    juce::CriticalSection slotLock;
 
     double sampleRate = 44100.0;
 
@@ -120,10 +136,26 @@ private:
     bool holdActive = false;
     float heldLevel = 0.0f, heldLogFreq = 0.0f, holdMix = 0.0f;
 
+    // Effects
+    Chorus chorus;
+    Echo echo;
+    Plate plate;
+    juce::SmoothedValue<float> routingSmooth;
+    juce::SmoothedValue<float> chorusAmount, chorusRateSmooth, chorusDepthSmooth;
+    // Delay and reverb have a send (the on/off switch) and a return (Mix). Switching one off closes
+    // the send only, so its repeats or tail ring out naturally, like a pedal with trails.
+    juce::SmoothedValue<float> echoSend, echoAmount, echoFeedbackSmooth, echoToneSmooth;
+    juce::SmoothedValue<float> plateSend, plateAmount;
+    bool chorusActive = false, echoActive = false, plateActive = false;
+    int echoSilentSamples = 0, plateSilentSamples = 0;
+
     // Output stage
     juce::SmoothedValue<float> tunerMuteSmooth, bypassSmooth;
 
-    juce::AudioBuffer<float> scratch;   // 0, 1: processed dry signal, 2: mono analysis signal
+    // Scratch channels for one chunk: dry L/R, mono analysis, synth voice, effect bus L/R, reverb L/R, dry gain
+    enum Scratch { dryLeft, dryRight, monoIn, synthOut, fxLeft, fxRight, verbLeft, verbRight, dryGainCh, numScratch };
+    juce::AudioBuffer<float> scratch;
+    bool needsReset = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SubterraProcessor)
 };

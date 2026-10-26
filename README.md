@@ -3,7 +3,9 @@
 A bass synthesizer pedal as a VST3 / AU plugin. Plug a bass in and play: Subterra tracks the pitch and
 dynamics of each note and plays a synth voice along with it, blended with your dry bass.
 
-![Subterra UI](docs/subterra-ui.png)
+| Pedal | Effects |
+| --- | --- |
+| ![Subterra pedal page](docs/subterra-ui.png) | ![Subterra effects page](docs/subterra-effects.png) |
 
 ## Controls
 
@@ -27,9 +29,25 @@ Every control on the UI is a real, automatable parameter.
 | **Glide** | Portamento between legato notes (off to 1 s). Notes that start from silence always land on pitch. |
 | **Playing** readout | The note and frequency you are playing. |
 | **Tuner** | Turns the readout into a tuner (note, cents and a needle) and mutes the output. Muting and the A4 reference are in Settings. |
-| **Presets** | ‹ › step through presets; click the name or the folder button to pick from the list. The save button stores your own. A `*` means the sound was edited. |
+| **Presets** | ‹ › step through presets; click the name or the folder button to open the preset browser (14 factory sounds, your own below them, each with a delete button that moves the file to the Trash). The save button names and stores the current sound, and warns before replacing one. A `*` means the sound was edited. |
 | **A/B** | Click to switch between two complete settings to compare them. Right-click to copy one to the other. |
-| **Settings** | Tuner reference (A4 = 432 to 446 Hz), mute while tuning, window size, reset. |
+| **Settings** | Tuner reference (A4 = 432 to 446 Hz), mute while tuning, window size, copy A/B, reset to Init. |
+| **PEDAL / EFFECTS** | Slides between the pedal and the effects page. Dots on EFFECTS show which effects are on. |
+
+### Effects
+
+Three effects in a fixed chain after the synth: chorus, then delay, then reverb. Each has a footswitch and LED,
+and its own display.
+
+| Control | What it does |
+| --- | --- |
+| **Effects on** | **Synth**: only the synth goes through the effects and your bass stays dry and tight. **Synth + Bass**: everything goes through them. |
+| **Chorus** Rate / Depth / Mix | Two-voice stereo chorus; the display shows the sweep moving at the Rate. |
+| **Delay** Time / Feedback / Tone / Mix | Tape-style echo up to 2.5 s with darkening repeats. Changing the time glides like tape instead of clicking. |
+| **Delay** SYNC / FREE | Sync sets the time in note values (1/16 to 1/2, with dotted and triplet) from the host tempo; the display shows the resulting milliseconds. Free uses the Time knob in ms. |
+| **Reverb** Size / Tone / Mix | Plate reverb; the display shows the decay. |
+
+Switching delay or reverb off lets the repeats and tail ring out (trails), as on a pedalboard.
 
 Knobs: drag up/down, mouse wheel, double-click to reset. Hover for a description, and the value shows while you drag.
 The window can be resized from the corner.
@@ -43,6 +61,13 @@ The window can be resized from the corner.
   filter envelope, so the synth breathes with your playing.
 - **Voice**: band-limited (PolyBLEP) morphing oscillator, tanh drive, and a zero-delay-feedback state-variable
   low-pass filter.
+- **Gate**: the synth starts above the Tracking threshold and stops when the note falls back below it, or 40 dB
+  under its peak, so hum under a dying note doesn't keep it droning.
+- **Effects**: modulated delay-line chorus, a cubic-interpolated stereo echo with a filtered, soft-limited
+  feedback path, and a Freeverb-based plate.
+- **Host friendly**: every change is smoothed (no clicks or zipper noise), the sound is identical at any buffer
+  size, audio runs in fixed 256-sample chunks with no allocation, and it uses under 2% of one core with
+  everything on.
 
 Source layout: `source/dsp` (tracker, voice), `source/PluginProcessor.*` (signal flow), `source/Presets.*`,
 `source/PluginEditor.*` and `source/ui` (the interface), `tests/` (engine tests), `tools/Snapshot.cpp`
@@ -55,7 +80,7 @@ Requires CMake 3.22+ and a C++20 compiler. JUCE 8 is fetched automatically (or p
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-./build/SubterraTests_artefacts/Release/SubterraTests
+./build/SubterraTests_artefacts/Release/SubterraTests   # 320 engine checks
 ```
 
 macOS builds VST3, AU and a standalone app; Windows and Linux build VST3 and standalone.

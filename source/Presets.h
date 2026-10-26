@@ -24,17 +24,19 @@ public:
     juce::File getUserFolder() const { return userFolder; }
     void rescanUserPresets();
 
-    int getNumPresets() const { return (int) presets.size(); }
+    int getNumPresets() const { const juce::ScopedLock sl (lock); return (int) presets.size(); }
     int getNumFactoryPresets() const { return numFactory; }
-    const Preset& getPreset (int index) const { return presets[(size_t) index]; }
+    Preset getPreset (int index) const;
 
     void loadPreset (int index);
     void loadNext();
     void loadPrevious();
     bool saveUserPreset (const juce::String& name);
 
-    int getCurrentIndex() const { return currentIndex; }
-    juce::String getCurrentName() const { return currentName; }
+    int getCurrentIndex() const { const juce::ScopedLock sl (lock); return currentIndex; }
+    juce::String getCurrentName() const { const juce::ScopedLock sl (lock); return currentName; }
+    bool deleteUserPreset (int index);
+    bool userPresetExists (const juce::String& name) const;
     bool isModified() const { return modified.load(); }
 
     // Captures or applies the sound parameters (not Bypass, Hold or Tuner).
@@ -44,6 +46,9 @@ public:
     // Session state: which preset is loaded and whether it was edited.
     juce::ValueTree getState() const;
     void setState (const juce::ValueTree& state);
+
+    // Factory preset values that name no sound parameter (a typo check for the tests).
+    juce::StringArray unknownFactoryIds;
 
     // Set when the UI should refresh the preset name.
     std::atomic<bool> displayChanged { true };
@@ -60,5 +65,6 @@ private:
     std::atomic<bool> modified { false };
     std::atomic<int> applying { 0 };
     juce::File userFolder;
+    juce::CriticalSection lock;   // guards the current preset; the host may save state from any thread
 };
 }
