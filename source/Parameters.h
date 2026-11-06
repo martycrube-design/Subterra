@@ -53,6 +53,9 @@ inline constexpr int defaultDelayDivision = 3;   // dotted eighth
 inline constexpr int octaveSteps[] = { -2, -1, 0, 1, 2 };
 inline constexpr int defaultOctaveIndex = 2;
 
+// Glide at or below this is off: the voice follows the bass cycle by cycle.
+inline constexpr float glideOffMs = 1.05f;
+
 // Parameters that are performance switches rather than part of a sound.
 // Presets and A/B slots leave them alone.
 inline bool isPerformanceParameter (const juce::String& id)

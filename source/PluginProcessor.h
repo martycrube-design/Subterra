@@ -6,6 +6,7 @@
 #include "Parameters.h"
 #include "Presets.h"
 #include "dsp/Effects.h"
+#include "dsp/LockedVoice.h"
 #include "dsp/PitchTracker.h"
 #include "dsp/SynthVoice.h"
 
@@ -119,8 +120,8 @@ private:
 
     // Tracking and synth
     PitchTracker tracker;
-    EnvelopeFollower follower;
-    MorphOscillator oscillator;
+    LockedVoice voice;
+    EnvelopeFollower follower;   // smooth level for the gate; the voice's own level shapes the sound
     ResonantLowPass synthFilter;
     juce::SmoothedValue<float> waveSmooth, cutoffSmooth, resoSmooth, envSmooth, driveSmooth, mixSmooth;
 
@@ -131,7 +132,7 @@ private:
     float currentLogFreq = 0.0f, targetLogFreq = 0.0f, voiceLogFreq = 0.0f;
     bool haveFrequency = false;
     bool waitingForFirstPitch = true;
-    float notePeak = 0.0f;
+    float notePeak = 0.0f, noteVoicePeak = 0.0f;
 
     bool holdActive = false;
     float heldLevel = 0.0f, heldLogFreq = 0.0f, holdMix = 0.0f;

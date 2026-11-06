@@ -45,7 +45,7 @@ public:
 
     PedalBody pedal;
     Knob tracking { KnobStyle::frameMedium, "Tracking", "sensitivity: how quietly you can play and still trigger the synth" };
-    Knob glide { KnobStyle::frameMedium, "Glide", "portamento time between legato notes" };
+    Knob glide { KnobStyle::frameMedium, "Glide", "off: locked to your strings; up: slide between legato notes" };
     NoteDisplay noteDisplay;
     PillToggle tunerButton;
 
