@@ -25,7 +25,7 @@ public:
         tauMax = (int) std::ceil (analysisRate / minFrequency);
         windowSize = tauMax + 8;
         bufferSize = windowSize + tauMax + 2;
-        hopSize = std::max (16, (int) (analysisRate * 0.006));
+        hopSize = std::max (16, (int) (analysisRate * 0.010));
 
         ring.assign ((size_t) bufferSize, 0.0f);
         frame.assign ((size_t) bufferSize, 0.0f);

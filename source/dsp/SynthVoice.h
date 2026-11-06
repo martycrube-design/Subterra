@@ -17,20 +17,25 @@ public:
     float process (double increment, float wave) noexcept
     {
         increment = std::clamp (increment, 0.0, 0.45);
-        const float t = (float) phase;
-        const float dt = (float) increment;
+        const float out = render ((float) phase, (float) increment, wave);
 
+        phase += increment;
+        if (phase >= 1.0)
+            phase -= 1.0;
+
+        return out;
+    }
+
+    // One sample of the morphing waveform at phase t in [0, 1) with phase increment dt.
+    static float render (float t, float dt, float wave) noexcept
+    {
+        dt = std::clamp (dt, 1.0e-7f, 0.45f);
         const float position = std::clamp (wave, 0.0f, 1.0f) * 3.0f;
         const int segment = std::min (2, (int) position);
         const float blend = position - (float) segment;
 
         const float a = shape (segment, t, dt);
         const float b = blend > 0.0f ? shape (segment + 1, t, dt) : 0.0f;
-
-        phase += increment;
-        if (phase >= 1.0)
-            phase -= 1.0;
-
         return a + (b - a) * blend;
     }
 
@@ -112,7 +117,7 @@ inline float driveShape (float x, float drive) noexcept
     return std::tanh (gain * x) / std::tanh (gain);
 }
 
-// Level follower for the bass: mean square through a two-pole low-pass, so the
+// Smooth level of the bass, used for the gate: mean square through a two-pole low-pass, so the
 // result rises and falls quickly but has little ripple even on a low B.
 // Returns the peak level of an equivalent sine.
 class EnvelopeFollower

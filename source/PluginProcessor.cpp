@@ -113,6 +113,7 @@ void SubterraProcessor::prepareToPlay (double newSampleRate, int)
     resetSmooth (plateAmount, 0.02, params.reverbMix->load());
 
     tracker.prepare (sampleRate);
+    voice.prepare (sampleRate);
     follower.prepare (sampleRate);
     synthFilter.prepare (sampleRate);
     chorus.prepare (sampleRate);
@@ -126,9 +127,9 @@ void SubterraProcessor::prepareToPlay (double newSampleRate, int)
 void SubterraProcessor::resetDsp()
 {
     tracker.reset();
+    voice.reset();
     follower.reset();
     synthFilter.reset();
-    oscillator.reset();
     for (auto* f : { &inHighPassFilter, &outHighPassFilter, &inLowPassFilter, &outLowPassFilter })
         f->reset();
     chorus.reset();
@@ -142,7 +143,7 @@ void SubterraProcessor::resetDsp()
     gateGain = 0.0f;
     haveFrequency = false;
     waitingForFirstPitch = true;
-    notePeak = 0.0f;
+    notePeak = noteVoicePeak = 0.0f;
     holdActive = false;
     heldLevel = 0.0f;
     holdMix = 0.0f;
@@ -215,12 +216,12 @@ void SubterraProcessor::processChunk (const float* rawL, const float* rawR, floa
     bypassSmooth.setTargetValue (params.bypass->load());
 
     const int octaveIndex = juce::jlimit (0, 4, (int) std::lround (params.octave->load()));
-    const float octaveShift = (float) octaveSteps[octaveIndex];
+    const int octaveStep = octaveSteps[octaveIndex];
 
     const float openDb = -20.0f - 50.0f * params.tracking->load();
     const float closeDb = openDb - 6.0f;
     const float glideCoef = onePole (sampleRate, juce::jmax (2.0f, params.glide->load()));
-    const float gateAttack = onePole (sampleRate, 4.0f);
+    const float gateAttack = onePole (sampleRate, 1.0f);
     const float gateRelease = onePole (sampleRate, 40.0f);
     const float holdCoef = onePole (sampleRate, 20.0f);
     const float voiceCoef = onePole (sampleRate, 1.5f);   // de-clicks the switch into and out of Hold
@@ -230,9 +231,11 @@ void SubterraProcessor::processChunk (const float* rawL, const float* rawR, floa
     if (holdOn && ! holdActive)
     {
         holdActive = true;
-        heldLogFreq = voiceLogFreq;
-        const float live = envelopeSmoothed * gateGain;
-        heldLevel = haveFrequency ? juce::jmax (live, notePeak * 0.6f) : 0.0f;
+        // The tracker's reading is the steadiest measure of the note being held.
+        const float trackedHz = tracker.getFrequency();
+        heldLogFreq = trackedHz > 0.0f ? std::log2 (trackedHz) : voiceLogFreq;
+        const float live = voice.getLevel() * gateGain;
+        heldLevel = haveFrequency ? juce::jmax (live, noteVoicePeak * 0.6f) : 0.0f;
     }
     else if (! holdOn)
     {
@@ -271,101 +274,111 @@ void SubterraProcessor::processChunk (const float* rawL, const float* rawR, floa
     inputMeters[0].push (inPeakL);
     inputMeters[1].push (rawR != rawL ? inPeakR : inPeakL);
 
-    // Pass 2: tracking and the synth voice. The tracker analyses on its own hop schedule and is
-    // read every sample, so the sound is the same whatever block size the host uses.
+    // Pass 2: the synth voice. It is locked to the bass waveform cycle by cycle, so it starts on the
+    // note's first zero crossing and follows pitch changes within one cycle: no analysis window and no
+    // lookahead, and the plugin reports zero latency. The pitch tracker runs alongside for the tuner and
+    // note readout, and only advises the voice (trigger filter, harmonic rejection, Hold pitch).
     float publishedFrequency = 0.0f;
+    const bool glideOn = params.glide->load() > glideOffMs;
 
+    for (int i = 0; i < numSamples; ++i)
     {
-        for (int i = 0; i < numSamples; ++i)
+        tracker.process (mono + i, 1);
+        const float trackedHz = tracker.getFrequency();
+        if (trackedHz > 0.0f && (gateOpen || tunerOn))
+            publishedFrequency = trackedHz;
+
+        // Glide and Hold run the voice free at a gliding or held pitch; otherwise it follows each cycle.
+        const bool locked = ! holdActive && ! glideOn;
+        voice.advance (mono[i], trackedHz, locked, std::exp2 ((double) voiceLogFreq) / sampleRate);
+
+        envelopeSmoothed = follower.process (mono[i]);
+        const float levelDb = juce::Decibels::gainToDecibels (envelopeSmoothed, -120.0f);
+
+        if (! gateOpen && levelDb > openDb)
         {
-            tracker.process (mono + i, 1);
-            const float trackedHz = tracker.getFrequency();
-            if (trackedHz > 0.0f && (gateOpen || tunerOn))
-                publishedFrequency = trackedHz;
-
-            envelopeSmoothed = follower.process (mono[i]);
-            const float levelDb = juce::Decibels::gainToDecibels (envelopeSmoothed, -120.0f);
-
-            if (! gateOpen && levelDb > openDb)
-            {
-                gateOpen = true;
-                waitingForFirstPitch = true;
-                notePeak = 0.0f;
-            }
-            else if (gateOpen && (levelDb < closeDb || envelopeSmoothed < notePeak * 0.01f))
-            {
-                // Closes at the Tracking threshold, or once the note has died 40 dB below its peak,
-                // so hum and noise under a decayed note don't keep the synth droning.
-                gateOpen = false;
-            }
-
-            if (gateOpen)
-            {
-                notePeak = juce::jmax (notePeak, envelopeSmoothed);
-
-                if (trackedHz > 0.0f)
-                {
-                    const float target = std::log2 (trackedHz);
-                    // A note that starts from silence jumps straight to pitch; legato notes glide.
-                    if (waitingForFirstPitch && gateGain < 0.05f)
-                    {
-                        currentLogFreq = target;
-                        if (! holdActive)
-                            voiceLogFreq = target;
-                    }
-                    targetLogFreq = target;
-                    waitingForFirstPitch = false;
-                    haveFrequency = true;
-                }
-            }
-
-            currentLogFreq += (targetLogFreq - currentLogFreq) * glideCoef;
-
-            const bool voiceOn = gateOpen && haveFrequency && ! waitingForFirstPitch;
-            gateGain += ((voiceOn ? 1.0f : 0.0f) - gateGain) * (voiceOn ? gateAttack : gateRelease);
-
-            holdMix += ((holdActive ? 1.0f : 0.0f) - holdMix) * holdCoef;
-            const float liveAmp = envelopeSmoothed * gateGain;
-            const float amp = liveAmp + (heldLevel - liveAmp) * holdMix;
-
-            const float voiceTarget = holdActive ? heldLogFreq : currentLogFreq;
-            if (amp < 1.0e-5f)
-                voiceLogFreq = voiceTarget;
-            else
-                voiceLogFreq += (voiceTarget - voiceLogFreq) * voiceCoef;
-
-            // Synth voice: oscillator -> drive -> resonant filter -> level from the bass.
-            const float wave = waveSmooth.getNextValue();
-            const float drive = driveSmooth.getNextValue();
-            const float reso = resoSmooth.getNextValue();
-            const float envAmount = envSmooth.getNextValue();
-            const float cutoffLog = cutoffSmooth.getNextValue();
-
-            float wet = 0.0f;
-            if (haveFrequency)
-            {
-                const double frequency = std::exp2 ((double) voiceLogFreq + octaveShift);
-                float s = oscillator.process (frequency / sampleRate, wave);
-                s = driveShape (s, drive);
-
-                const float envNorm = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (amp, -120.0f) + 48.0f) / 48.0f);
-                const float cutoff = std::exp2 (cutoffLog + envAmount * envNorm * 5.0f);
-                s = synthFilter.process (s, cutoff, reso);
-
-                wet = s * amp * (1.0f - 0.35f * reso);
-            }
-
-            // The effects bus carries the synth, plus the dry bass when routed to "Synth + Bass".
-            const float mixValue = mixSmooth.getNextValue();
-            const float dryGain = std::cos (mixValue * juce::MathConstants<float>::halfPi);
-            const float wetGain = std::sin (mixValue * juce::MathConstants<float>::halfPi);
-            const float routeAll = routingSmooth.getNextValue();
-
-            synth[i] = wet * wetGain;
-            dryGains[i] = dryGain * (1.0f - routeAll);
-            fxL[i] = synth[i] + dryL[i] * dryGain * routeAll;
-            fxR[i] = synth[i] + dryR[i] * dryGain * routeAll;
+            gateOpen = true;
+            waitingForFirstPitch = true;
+            notePeak = noteVoicePeak = 0.0f;
         }
+        else if (gateOpen && (levelDb < closeDb || envelopeSmoothed < notePeak * 0.01f))
+        {
+            // Closes at the Tracking threshold, or once the note has died 40 dB below its peak,
+            // so hum and noise under a decayed note don't keep the synth droning.
+            gateOpen = false;
+        }
+
+        const float measuredHz = voice.getMeasuredFrequency();
+        if (gateOpen)
+        {
+            notePeak = juce::jmax (notePeak, envelopeSmoothed);
+            noteVoicePeak = juce::jmax (noteVoicePeak, voice.getLevel());
+
+            if (measuredHz > 0.0f)
+            {
+                const float target = std::log2 (measuredHz);
+                // A note that starts from silence lands straight on pitch; legato notes glide.
+                if (waitingForFirstPitch && gateGain < 0.05f)
+                {
+                    currentLogFreq = target;
+                    if (! holdActive)
+                        voiceLogFreq = target;
+                }
+                targetLogFreq = target;
+                haveFrequency = true;
+            }
+
+            // Locked, the voice can start on the first crossing; free running, it needs a pitch first.
+            if (locked ? voice.isActive() : measuredHz > 0.0f)
+                waitingForFirstPitch = false;
+        }
+
+        currentLogFreq += (targetLogFreq - currentLogFreq) * glideCoef;
+
+        const bool voiceOn = gateOpen && ! waitingForFirstPitch && (locked ? voice.isActive() : haveFrequency);
+        gateGain += ((voiceOn ? 1.0f : 0.0f) - gateGain) * (voiceOn ? gateAttack : gateRelease);
+
+        holdMix += ((holdActive ? 1.0f : 0.0f) - holdMix) * holdCoef;
+        const float liveAmp = voice.getLevel() * gateGain;
+        const float amp = liveAmp + (heldLevel - liveAmp) * holdMix;
+
+        // The pitch the voice runs at when it is not following the bass cycle by cycle.
+        const float voiceTarget = holdActive ? heldLogFreq : (glideOn ? currentLogFreq : targetLogFreq);
+        if (amp < 1.0e-5f || (locked && measuredHz > 0.0f))
+            voiceLogFreq = locked && measuredHz > 0.0f ? std::log2 (measuredHz) : voiceTarget;
+        else
+            voiceLogFreq += (voiceTarget - voiceLogFreq) * voiceCoef;
+
+        // Synth voice: waveform -> drive -> resonant filter -> level from the bass.
+        const float wave = waveSmooth.getNextValue();
+        const float drive = driveSmooth.getNextValue();
+        const float reso = resoSmooth.getNextValue();
+        const float envAmount = envSmooth.getNextValue();
+        const float cutoffLog = cutoffSmooth.getNextValue();
+
+        float wet = 0.0f;
+        if (haveFrequency || voice.isActive())
+        {
+            float s = voice.render (octaveStep, wave);
+            s = driveShape (s, drive);
+
+            const float envNorm = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (amp, -120.0f) + 48.0f) / 48.0f);
+            const float cutoff = std::exp2 (cutoffLog + envAmount * envNorm * 5.0f);
+            s = synthFilter.process (s, cutoff, reso);
+
+            wet = s * amp * (1.0f - 0.35f * reso);
+        }
+
+        // The effects bus carries the synth, plus the dry bass when routed to "Synth + Bass".
+        const float mixValue = mixSmooth.getNextValue();
+        const float dryGain = std::cos (mixValue * juce::MathConstants<float>::halfPi);
+        const float wetGain = std::sin (mixValue * juce::MathConstants<float>::halfPi);
+        const float routeAll = routingSmooth.getNextValue();
+
+        synth[i] = wet * wetGain;
+        dryGains[i] = dryGain * (1.0f - routeAll);
+        fxL[i] = synth[i] + dryL[i] * dryGain * routeAll;
+        fxR[i] = synth[i] + dryR[i] * dryGain * routeAll;
     }
     detectedFrequency = publishedFrequency;
 

@@ -117,10 +117,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (makeBool (tuner, "Tuner", false));
 
     layout.add (makeFloat (tracking, "Tracking", Range (0.0f, 1.0f), 0.6f, percent()));
-    layout.add (makeFloat (glide, "Glide", logRange (1.0f, 1000.0f), 20.0f,
+    layout.add (makeFloat (glide, "Glide", logRange (1.0f, 1000.0f), 1.0f,
                            FloatAttributes().withLabel ("ms")
                                .withStringFromValueFunction ([] (float v, int) {
-                                   return v <= 1.05f ? juce::String ("Off") : juce::String (juce::roundToInt (v)) + " ms";
+                                   return v <= glideOffMs ? juce::String ("Off") : juce::String (juce::roundToInt (v)) + " ms";
                                })
                                .withValueFromStringFunction ([] (const juce::String& t) { return juce::jmax (1.0f, t.getFloatValue()); })));
 

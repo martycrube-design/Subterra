@@ -1046,6 +1046,127 @@ void testRealPlaying()
 }
 
 // ---------------------------------------------------------------------------
+// Zero latency: the synth starts within the note's first cycle and follows note changes cycle by cycle.
+
+// A sustained bass tone whose pitch changes (phase-continuously) at `switchAt` seconds.
+std::vector<float> legatoTone (float from, float to, double switchAt, double seconds, float peak = 0.5f)
+{
+    const int n = (int) (seconds * testRate);
+    std::vector<float> out ((size_t) n);
+    double phase = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = i / testRate;
+        phase += (t < switchAt ? from : to) / testRate;
+        double s = 0.0;
+        for (int h = 1; h <= 8; ++h)
+            s += std::sin (juce::MathConstants<double>::twoPi * h * phase) / (h * h * 0.6 + 0.4);
+        out[(size_t) i] = (float) (s * 0.55 * peak * std::min (1.0, t * 200.0) * std::exp (-t * 0.5));
+    }
+    return out;
+}
+
+std::unique_ptr<SubterraProcessor> pureSynth (int block = 64)
+{
+    auto p = makeProcessor (testRate, block);
+    setParam (*p, ParamIDs::mix, 1.0f);
+    setParam (*p, ParamIDs::wave, 0.0f);
+    setParam (*p, ParamIDs::filter, 12000.0f);
+    setParam (*p, ParamIDs::env, 0.0f);
+    setParam (*p, ParamIDs::reso, 0.0f);
+    setParam (*p, ParamIDs::drive, 0.0f);
+    p->prepareToPlay (testRate, block);
+    return p;
+}
+
+double msUntil (const std::vector<float>& x, float level)
+{
+    for (size_t i = 0; i < x.size(); ++i)
+        if (std::abs (x[i]) >= level)
+            return 1000.0 * (double) i / testRate;
+    return 1.0e9;
+}
+
+// Time after `from` (seconds) when the output's cycle-by-cycle pitch settles within `cents` of `hz`.
+double msToSettle (const std::vector<float>& x, double from, float hz, float cents)
+{
+    double previous = -1.0, lastBad = from * testRate;
+    for (size_t i = 1; i < x.size(); ++i)
+    {
+        if (x[i - 1] < 0.0f && x[i] >= 0.0f)
+        {
+            const double t = (double) (i - 1) + x[i - 1] / (x[i - 1] - x[i]);
+            if (previous > from * testRate && std::abs (centsBetween ((float) (testRate / (t - previous)), hz)) > cents)
+                lastBad = t;
+            previous = t;
+        }
+    }
+    return 1000.0 * (lastBad - from * testRate) / testRate;
+}
+
+void testLatency()
+{
+    section ("Zero latency");
+    {
+        auto p = pureSynth();
+        expect (p->getLatencySamples() == 0, "reports zero latency to the host");
+    }
+
+    // From silence: the synth is heard within one cycle of the note (the tracker alone needs 50-70 ms).
+    for (float hz : { 30.87f, 41.2f, 55.0f, 98.0f, 220.0f })
+    {
+        auto p = pureSynth();
+        const auto out = render (*p, legatoTone (hz, hz, 99.0, 0.5), 64).left;
+        float steady = 0.0f;
+        for (size_t i = (size_t) (0.3 * testRate); i < (size_t) (0.4 * testRate); ++i)
+            steady = std::max (steady, std::abs (out[i]));
+        const double period = 1000.0 / hz;
+        const double audible = msUntil (out, 1.0e-3f), half = msUntil (out, steady * 0.5f);
+        std::printf ("  %.1f Hz: audible after %.1f ms, -6 dB after %.1f ms (one cycle is %.1f ms)\n", hz, audible, half, period);
+        expect (audible < 0.6 * period + 3.0, juce::String (hz) + " Hz starts within the first cycle");
+        expect (half < period + 3.0, juce::String (hz) + " Hz reaches full level within a cycle");
+    }
+
+    // Legato note changes: the synth is on the new note within four cycles (the tracker alone needs 70-80 ms).
+    struct Change { float from, to; };
+    for (auto c : { Change { 41.2f, 55.0f }, Change { 55.0f, 41.2f }, Change { 73.42f, 98.0f }, Change { 98.0f, 146.8f } })
+    {
+        const double limitMs = 4000.0 / std::min (c.from, c.to);
+        auto p = pureSynth();
+        const auto out = render (*p, legatoTone (c.from, c.to, 0.5, 0.9), 64).left;
+        const double coarse = msToSettle (out, 0.5, c.to, 50.0f), fine = msToSettle (out, 0.5, c.to, 15.0f);
+        std::printf ("  %.1f -> %.1f Hz: within 50 cents after %.1f ms, 15 cents after %.1f ms\n", c.from, c.to, coarse, fine);
+        expect (fine < limitMs, juce::String (c.from) + " -> " + juce::String (c.to) + " Hz legato change lands within four cycles");
+    }
+
+    // Every plucked note in the right octave, on every Octave setting, with noise and hum.
+    {
+        std::mt19937 rng (5);
+        int good = 0, total = 0;
+        for (float hz : { 41.2f, 55.0f, 73.42f, 98.0f, 130.8f })
+        {
+            for (int step = 0; step < 5; ++step)
+            {
+                auto p = pureSynth();
+                setParam (*p, ParamIDs::octave, (float) step);
+                auto pluck = pluckedString (hz, 0.6, rng);
+                addNoiseAndHum (pluck, rng);
+                const auto out = render (*p, pluck, 64).left;
+                const float tuneHz = (float) (testRate / std::floor (testRate / hz)) * std::exp2 ((float) octaveSteps[step]);
+                const float heard = estimatePitch (out, (size_t) (0.15 * testRate), (size_t) (0.5 * testRate),
+                                                   tuneHz * 0.6f, tuneHz * 1.6f);
+                ++total;
+                if (std::abs (centsBetween (heard, tuneHz)) < 15.0f)
+                    ++good;
+                else
+                    std::printf ("    plucked %.1f Hz, octave %d: expected %.2f, heard %.2f\n", hz, octaveSteps[step], tuneHz, heard);
+            }
+        }
+        expect (good == total, "plucked notes play in the right octave on every Octave setting (" + juce::String (good) + "/" + juce::String (total) + ")");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // No clicks: switches and knob jumps during a sustained note.
 
 float maxStep (const std::vector<float>& x, size_t from, size_t to)
@@ -1301,6 +1422,7 @@ int main()
     testRobustness();
     testEffects();
     testRealPlaying();
+    testLatency();
     testNoClicks();
     testHostBehaviour();
 
